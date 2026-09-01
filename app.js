@@ -1533,7 +1533,7 @@ async function fetchMessageIdsByFromName(account, name) {
   const ids = [];
   let pageToken = null;
   let pages = 0;
-  const q = `from:(${name})`;
+  const q = `in:anywhere from:(${name})`;
   do {
     const params = new URLSearchParams({ q, maxResults: "500" });
     if (pageToken) params.set("pageToken", pageToken);
