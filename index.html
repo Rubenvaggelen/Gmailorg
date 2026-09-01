@@ -83,17 +83,38 @@
     </section>
 
     <section id="view-calendar" class="view hidden">
-      <div class="filter-row" id="calendar-account-chips"></div>
-      <div class="filter-row" id="calendar-range-chips"></div>
-      <div class="section-head">
-        <h2>Kalender</h2>
-        <button id="add-event-btn" class="btn-primary small">+ Afspraak</button>
+      <div class="filter-row" id="calendar-subview-chips"></div>
+
+      <div id="calendar-agenda-panel">
+        <div class="filter-row" id="calendar-account-chips"></div>
+        <div class="filter-row" id="calendar-range-chips"></div>
+        <div class="section-head">
+          <h2>Kalender</h2>
+          <button id="add-event-btn" class="btn-primary small">+ Afspraak</button>
+        </div>
+        <div id="calendar-empty" class="empty-state hidden">
+          <p class="empty-title">Geen afspraken</p>
+          <p class="empty-copy">Niets gepland in deze periode, of verbind eerst een account.</p>
+        </div>
+        <ul id="event-list" class="event-list"></ul>
       </div>
-      <div id="calendar-empty" class="empty-state hidden">
-        <p class="empty-title">Geen afspraken</p>
-        <p class="empty-copy">Niets gepland in deze periode, of verbind eerst een account.</p>
+
+      <div id="restaurants-panel" class="hidden">
+        <div class="section-head">
+          <h2>Restaurants in de buurt</h2>
+          <button id="find-restaurants-btn" class="btn-primary small">Zoek bij mij in de buurt</button>
+        </div>
+        <p class="settings-hint">
+          Gebruikt je huidige locatie en gratis gegevens van OpenStreetMap.
+          Openingstijden kunnen soms ontbreken of verouderd zijn.
+        </p>
+        <div id="restaurants-status" class="settings-hint hidden"></div>
+        <div id="restaurants-empty" class="empty-state hidden">
+          <p class="empty-title">Nog niets gezocht</p>
+          <p class="empty-copy">Tik op "Zoek bij mij in de buurt" om restaurants dichtbij te vinden.</p>
+        </div>
+        <ul id="restaurant-list" class="restaurant-list"></ul>
       </div>
-      <ul id="event-list" class="event-list"></ul>
     </section>
 
     <section id="view-settings" class="view hidden">
