@@ -773,3 +773,15 @@ main {
   font-size: 12.5px;
   color: var(--text-dim);
 }
+
+.restaurant-website {
+  font-size: 12.5px;
+  color: var(--amber);
+  text-decoration: none;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.restaurant-website:active {
+  opacity: 0.7;
+}
