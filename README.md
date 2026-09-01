@@ -1,121 +1,97 @@
-# Postbus — je Gmail-accounts in één app
+# Gmail Org — je Gmail én Agenda in één app
 
-Een installeerbare web-app (PWA) die 3-5 Gmail-accounts samenvoegt tot
-één overzicht, en regels kan toepassen (archiveren, labelen, auto-reply).
-Er is geen eigen server: de app praat via jouw browser rechtstreeks met
-Google, met een OAuth-token per account. Er wordt niets naar een derde
-partij gestuurd.
+Een installeerbare web-app (PWA) die 3-5 Google-accounts samenvoegt:
+mail met regels/automatisering, én een gedeelde kalender. Er is geen
+eigen server: de app praat via jouw browser rechtstreeks met Google,
+met een OAuth-token per account.
 
-## Stap 1 — Zet de app online (nodig voor Google-login)
+## Stap 1 — Zet de app online
 
-Google OAuth werkt niet vanaf een lokaal bestand (`file://`) — de app
-moet op een echt `https://`-adres staan. De makkelijkste gratis opties:
+Google OAuth werkt alleen op een echt `https://`-adres. Gratis optie:
+**GitHub Pages**.
 
-**GitHub Pages** (aanrader)
-1. Maak een nieuwe repository op GitHub, upload deze 7 bestanden.
-2. Ga naar Settings → Pages → kies de main-branch als bron.
-3. Je krijgt een adres als `https://jouwnaam.github.io/postbus/`.
+1. Maak een nieuwe repository op GitHub, upload alle bestanden uit
+   deze map (zorg dat de bestandsnamen exact kloppen — geen `(1)` of
+   `(2)` erachter als je ze via de browser download).
+2. Ga naar Settings → Pages → Branch: `main`, map `/ (root)` → Save.
+3. Je krijgt een adres als `https://jouwnaam.github.io/jouwrepo/`.
 
-**Alternatief:** Netlify of Vercel — sleep de map in hun dashboard en je
-krijgt direct een live URL.
+## Stap 2 — Google Cloud: OAuth Client ID
 
-## Stap 2 — Voeg je site toe als 'Authorized origin' in Google Cloud
+1. console.cloud.google.com → nieuw of bestaand project → APIs &
+   Services → Credentials → OAuth Client ID → type **Web application**.
+2. Bij **Authorized JavaScript origins**: voeg je site toe zonder pad
+   erachter, bijv. `https://jouwnaam.github.io`.
+3. Kopieer de Client ID (eindigt op `.apps.googleusercontent.com`).
 
-1. Ga naar console.cloud.google.com → jouw project → APIs & Services →
-   Credentials.
-2. Open (of maak) een OAuth Client ID van het type **Web application**.
-3. Zet bij **Authorized JavaScript origins** het adres van stap 1, zonder
-   pad erachter, bijv. `https://jouwnaam.github.io`.
-4. Kopieer de Client ID (eindigt op `.apps.googleusercontent.com`).
+## Stap 3 — OAuth-consentscherm
 
-## Stap 3 — Open de app en plak je Client ID
+1. **Branding**: vul App-naam en je eigen e-mail in bij support/
+   developer contact. De rest mag leeg voor persoonlijk gebruik.
+2. **Audience/Test users**: voeg je 3-5 Gmail-adressen toe als
+   testgebruiker.
+3. **Scopes**: voeg toe — `.../auth/gmail.readonly`,
+   `.../auth/gmail.modify`, `.../auth/gmail.send`,
+   `.../auth/calendar`, `.../auth/userinfo.email`.
+4. Zorg dat de publiceringsstatus op **Testing** staat.
 
-Bezoek je live URL op je telefoon. Bij eerste gebruik vraagt de app om de
-Client ID uit stap 2 — plak die en je bent klaar.
+## Stap 4 — Open en installeer
 
-## Stap 4 — Installeer op je startscherm
+Bezoek je live URL op je telefoon, plak de Client ID, en installeer via
+"Toevoegen aan startscherm" (Android/Chrome) of "Zet op beginscherm"
+(iPhone/Safari).
 
-- **Android/Chrome:** menu (⋮) → "Toevoegen aan startscherm".
-- **iPhone/Safari:** deelknop → "Zet op beginscherm".
+## Stap 5 — Verbind je accounts
 
-Vanaf dan opent de app als een gewone app-icoon, los van de browserbalk.
+Tik op **+ Account** en log in met elk adres. Geef toestemming voor
+zowel Gmail als Agenda in het Google-scherm.
 
-## Stap 5 — Verbind je 3-5 accounts
+---
 
-Tik op **+ Account** en log in met elk Gmail-adres. Zorg dat elk adres al
-als testgebruiker in het OAuth-consentscherm staat (dat hadden we al
-gezet) — anders weigert Google de login met een waarschuwing.
+## Wat de app kan
 
-## Nieuw: Kalender-tab
+**Postbus**
+- Samengevoegde inbox van al je accounts, met mappen: Postvak IN,
+  Verzonden, Concepten, Prullenbak.
+- Zoeken, categorieën (Persoonlijk/Nieuwsbrieven/Meldingen).
+- Bericht openen voor volledige tekst, antwoorden, archiveren,
+  verwijderen, snoozen (1 uur/vanavond/morgen/volgende week).
+- Swipe-gebaren, zelf in te stellen.
+- Opstellen-knop voor nieuwe e-mails.
 
-- **Kalender-tab** naast Postbus: agenda-items van al je verbonden
-  accounts samengevoegd, gefilterd op account en periode (vandaag/week/maand).
-- **Afspraken aanmaken, bewerken en verwijderen** — inclusief locatie,
+**Regels**
+- Automatisch archiveren op basis van afzender/onderwerp.
+- Labelen en auto-reply staan als volgende uitbreiding klaar in de
+  code (`executeRuleAction` in `app.js`).
+
+**Kalender**
+- Agenda-items van al je accounts samengevoegd, gefilterd op account
+  en periode (vandaag/week/maand).
+- Afspraken aanmaken, bewerken en verwijderen — met locatie,
   beschrijving, hele-dag-optie en gasten uitnodigen.
 
-⚠️ **Belangrijk:** dit vereist een extra scope. Voeg in het OAuth-
-consentscherm (tabblad Scopes) ook `.../auth/calendar` toe, net zoals je
-eerder de Gmail-scopes hebt toegevoegd. Verbind daarna al je accounts
-opnieuw in de Accounts-tab (verwijderen + opnieuw toevoegen) zodat de
-nieuwe toestemming wordt gevraagd.
+**Instellingen**
+- Ververs-interval, aantal berichten per ronde, categorieën aan/uit,
+  swipe-gedrag, browser-notificaties, alles-wissen.
 
-## Mappen en opstellen
+## Beperkingen
 
-- **Map-kiezer** bovenin de Postbus-tab: Postvak IN / Verzonden /
-  Concepten / Prullenbak — schakel ertussen om die map van al je
-  accounts te zien.
-- **Opstellen-knop** rechtsboven: schrijf een gloednieuwe e-mail
-  (los van een reply), kies vanaf welk account je 'm verstuurt.
+- Ververst zolang de app open staat — geen achtergrondverwerking
+  (dat vereist server-side push via Cloud Pub/Sub).
+- Snoozen archiveert het bericht en onthoudt de tijd, maar zet het nog
+  niet automatisch terug in Postvak IN als de tijd verstrijkt.
+- Labelen (Regels) en concepten opslaan vanuit Opstellen zijn nog niet
+  uitgevoerd.
 
-## Smart-client functies
+## Veelvoorkomende problemen
 
-- **Zoekbalk** — filtert direct op afzender, onderwerp en tekst.
-- **Categorieën** — Persoonlijk / Nieuwsbrieven / Meldingen, automatisch
-  bepaald (aan/uit in Instellingen).
-- **Berichtdetail** — tik een bericht open voor de volledige tekst,
-  met knoppen om te archiveren, verwijderen, snoozen of te beantwoorden.
-- **Swipe-gebaren** — naar links/rechts vegen voert de actie uit die je
-  in Instellingen hebt gekozen (archiveren, verwijderen of snoozen).
-- **Snoozen** — kies "over 1 uur", "vanavond", "morgen" of "volgende
-  week"; het bericht verdwijnt tot dat moment.
-- **Instellingen-tab** — ververs-interval, aantal berichten per ronde,
-  categorieën aan/uit, swipe-gedrag, browser-notificaties, en een
-  knop om alles te wissen.
-
-## Regels instellen
-
-Tab **Regels** → **+ Regel**. Een regel controleert bij elke ververs-cyclus
-(elke 2 minuten, of handmatig door de app te heropenen) of een binnenkomend
-bericht aan de voorwaarde voldoet, en voert dan de actie uit.
-
-- **Archiveren** werkt direct.
-- **Labelen** en **Auto-reply** staan in de code klaar als volgende stap
-  (zie de `TODO`-achtige commentaren in `app.js` bij `executeRuleAction`)
-  — dit vereist een klein beetje extra Gmail API-werk (label aanmaken,
-  of een RFC 2822-bericht samenstellen voor het versturen van een reply).
-  Zeg het gewoon als je wilt dat ik dat afmaak.
-
-## Bestanden in dit project
-
-| Bestand | Doel |
-|---|---|
-| `index.html` | Schermopbouw: setup, postbus, regels, accounts |
-| `style.css` | Vormgeving |
-| `app.js` | Login per account, ophalen/mergen van mail, regels-engine |
-| `manifest.json` | Maakt de app installeerbaar |
-| `sw.js` | Laat de app-schil ook zonder verbinding openen |
-| `icon-192.png` / `icon-512.png` | App-iconen (placeholder, mag je vervangen) |
-
-## Beperkingen van deze versie
-
-- Ververst zolang de app open staat — geen achtergrondverwerking als de
-  app dicht is (dat vereist server-side Gmail push-notificaties via
-  Cloud Pub/Sub; kan een volgende stap zijn).
-- **Snoozen** archiveert het bericht en onthoudt de tijd, maar het
-  automatisch terugzetten in Postvak IN zodra de tijd verstrijkt is nog
-  niet volledig afgerond.
-- Labelen (in Regels) is nog niet uitgevoerd — archiveren en
-  auto-reply-logging werken al.
-- Notificaties werken alleen zolang de app open staat in de browser.
-- De map "Concepten" toont bestaande concepten, maar nieuwe concepten
-  opslaan vanuit de app kan nog niet — Opstellen verstuurt direct.
+- **404 op je Pages-URL**: check of `index.html` (exacte naam, geen
+  toevoegingen) in de hoofdmap staat, en of Settings → Pages een
+  branch heeft ingesteld (niet "None").
+- **Fout 401: invalid_client**: de Client ID in de app matcht niet met
+  Google Cloud — kopieer 'm opnieuw, exact, uit Credentials.
+- **Toegang geblokkeerd / OAuth-fout**: check of je e-mailadres als
+  testgebruiker staat, en of alle scopes uit stap 3 zijn toegevoegd.
+- **Knoppen doen niets / lege schermen**: waarschijnlijk een oude
+  service-worker cache. Verwijder de app van je startscherm, wis
+  sitegegevens in de browser, en installeer opnieuw.

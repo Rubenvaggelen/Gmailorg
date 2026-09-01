@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Gmail Org &mdash; al je mail, &eacute;&eacute;n toren</title>
+<title>Gmail Org &mdash; al je mail en agenda, &eacute;&eacute;n toren</title>
 <meta name="theme-color" content="#12141C" />
 <link rel="manifest" href="manifest.json" />
 <link rel="apple-touch-icon" href="icon-192.png" />
@@ -18,7 +18,7 @@
     <div class="setup-mark"><img src="logo-mark.png" alt="Gmail Org" /></div>
     <h1>Eerst je Client&nbsp;ID</h1>
     <p class="setup-copy">
-      Deze app praat rechtstreeks met Google &mdash; er is geen server tussen jou en je mail.
+      Deze app praat rechtstreeks met Google &mdash; er is geen server tussen jou en je mail of agenda.
       Plak hieronder de OAuth Client ID die je in Google Cloud Console hebt aangemaakt.
     </p>
     <label class="field">
@@ -173,6 +173,10 @@
       <span class="tab-dot"></span>
       Inbox
     </button>
+    <button class="tab" data-view="calendar">
+      <span class="tab-dot"></span>
+      Kalender
+    </button>
     <button class="tab" data-view="rules">
       <span class="tab-dot"></span>
       Regels
@@ -180,10 +184,6 @@
     <button class="tab" data-view="accounts">
       <span class="tab-dot"></span>
       Accounts
-    </button>
-    <button class="tab" data-view="calendar">
-      <span class="tab-dot"></span>
-      Kalender
     </button>
     <button class="tab" data-view="settings">
       <span class="tab-dot"></span>

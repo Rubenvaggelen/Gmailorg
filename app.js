@@ -1,5 +1,5 @@
 /* ============================================================
-   Postbus — multi-account Gmail control tower
+   Gmail Org — multi-account Gmail + Calendar control tower
    Alles draait client-side: geen eigen server, geen wachtwoorden
    opgeslagen. Tokens leven alleen in het geheugen van de sessie.
    ============================================================ */
@@ -21,30 +21,30 @@ const DEFAULT_SETTINGS = {
   notifications: false
 };
 
+const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"];
+const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen" };
+const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
+const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
+const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
+
 const state = {
   clientId: localStorage.getItem("postbus:clientId") || "",
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
-  snoozed: JSON.parse(localStorage.getItem("postbus:snoozed") || "{}"), // { messageId: untilTimestamp }
+  snoozed: JSON.parse(localStorage.getItem("postbus:snoozed") || "{}"),
   seenIds: new Set(JSON.parse(localStorage.getItem("postbus:seenIds") || "[]")),
   messages: [],
+  events: [],
   activeAccountFilter: null,
   activeCategoryFilter: null,
+  activeCalendarAccountFilter: null,
+  activeRange: "week",
+  activeFolder: "INBOX",
   searchQuery: "",
   activeView: "inbox",
   pollHandle: null
 };
-
-const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"];
-const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen" };
-const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
-
-state.activeFolder = "INBOX";
-state.events = [];
-state.activeCalendarAccountFilter = null;
-state.activeRange = "week"; // today | week | month
-const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 
 function persistAccounts() {
   localStorage.setItem("postbus:accounts", JSON.stringify(
@@ -84,21 +84,23 @@ function initSetup() {
 
 function boot() {
   state.accounts = state.accounts.map(a => ({ ...a, token: null }));
+
   renderAccounts();
   renderChips();
-  renderCategoryChips();
   renderFolderChips();
+  renderCategoryChips();
   renderCalendarAccountChips();
   renderRangeChips();
   renderRules();
   updateSubline();
+
   wireNav();
+  wireSearch();
   wireRuleModal();
   wireDetailModal();
   wireComposeModal();
   wireEventModal();
   wireSettings();
-  wireSearch();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -152,9 +154,9 @@ function addOrUpdateAccount(email, token, expiresIn) {
   persistAccounts();
   renderAccounts();
   renderChips();
+  renderCalendarAccountChips();
   updateSubline();
   refreshInbox();
-  renderCalendarAccountChips();
   refreshCalendar();
 }
 
@@ -171,110 +173,11 @@ function removeAccount(email) {
   updateSubline();
 }
 
-/* ---------------- Google Calendar: fetch + merge ---------------- */
-
-function rangeBounds(range) {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  if (range === "today") end.setDate(end.getDate() + 1);
-  else if (range === "week") end.setDate(end.getDate() + 7);
-  else if (range === "month") end.setMonth(end.getMonth() + 1);
-  return { timeMin: start.toISOString(), timeMax: end.toISOString() };
-}
-
-async function refreshCalendar() {
-  const connected = state.accounts.filter(a => a.token);
-  if (connected.length === 0) { state.events = []; renderEvents(); return; }
-
-  const { timeMin, timeMax } = rangeBounds(state.activeRange);
-  const results = await Promise.all(connected.map(a => fetchAccountEvents(a, timeMin, timeMax)));
-  state.events = results.flat().sort((a, b) => a.start - b.start);
-  renderEvents();
-}
-
-async function fetchAccountEvents(account, timeMin, timeMax) {
-  try {
-    const params = new URLSearchParams({
-      timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50"
-    });
-    const r = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${account.token}` } }
-    );
-    if (!r.ok) return [];
-    const data = await r.json();
-    return (data.items || []).map(ev => ({
-      id: ev.id,
-      accountEmail: account.email,
-      accountColor: account.color,
-      title: ev.summary || "(geen titel)",
-      location: ev.location || "",
-      description: ev.description || "",
-      start: new Date(ev.start?.dateTime || ev.start?.date).getTime(),
-      end: new Date(ev.end?.dateTime || ev.end?.date).getTime(),
-      allDay: !ev.start?.dateTime,
-      attendees: (ev.attendees || []).map(a => a.email)
-    }));
-  } catch (e) {
-    console.error("Kalender ophalen mislukt voor", account.email, e);
-    return [];
-  }
-}
-
-async function createEvent(accountEmail, data) {
-  const account = state.accounts.find(a => a.email === accountEmail);
-  if (!account || !account.token) return;
-  const body = buildEventBody(data);
-  await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  refreshCalendar();
-}
-
-async function updateEvent(accountEmail, eventId, data) {
-  const account = state.accounts.find(a => a.email === accountEmail);
-  if (!account || !account.token) return;
-  const body = buildEventBody(data);
-  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  refreshCalendar();
-}
-
-async function deleteEvent(accountEmail, eventId) {
-  const account = state.accounts.find(a => a.email === accountEmail);
-  if (!account || !account.token) return;
-  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${account.token}` }
-  });
-  refreshCalendar();
-}
-
-function buildEventBody({ title, start, end, allDay, location, description, guests }) {
-  const body = { summary: title, location, description };
-  if (allDay) {
-    body.start = { date: start };
-    body.end = { date: end };
-  } else {
-    body.start = { dateTime: new Date(start).toISOString() };
-    body.end = { dateTime: new Date(end).toISOString() };
-  }
-  if (guests && guests.length) body.attendees = guests.map(email => ({ email }));
-  return body;
-}
-
-/* ---------------- Gmail fetch + merge ---------------- */
+/* ---------------- Gmail: fetch + merge ---------------- */
 
 async function refreshInbox() {
   const connected = state.accounts.filter(a => a.token);
-  if (connected.length === 0) return;
+  if (connected.length === 0) { state.messages = []; renderMessages(); return; }
 
   const results = await Promise.all(connected.map(fetchAccountMessages));
   const merged = results.flat();
@@ -314,15 +217,13 @@ async function fetchAccountMessages(account) {
     return details.filter(Boolean).map(d => {
       const headers = d.payload?.headers || [];
       const get = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || "";
-      const from = get("From") || "Onbekend";
-      const subject = get("Subject") || "(geen onderwerp)";
       const message = {
         id: d.id,
         threadId: d.threadId,
         accountEmail: account.email,
         accountColor: account.color,
-        from,
-        subject,
+        from: get("From") || "Onbekend",
+        subject: get("Subject") || "(geen onderwerp)",
         snippet: d.snippet || "",
         timestamp: parseInt(d.internalDate || "0", 10),
         messageIdHeader: get("Message-ID"),
@@ -336,8 +237,6 @@ async function fetchAccountMessages(account) {
     return [];
   }
 }
-
-/* ---------------- Categorisatie ---------------- */
 
 function classifyMessage(message) {
   if (message.hasListUnsubscribe) return "newsletter";
@@ -379,7 +278,7 @@ async function executeRuleAction(rule, message, account) {
   }
 }
 
-/* ---------------- Gmail acties: archive / trash / labels ---------------- */
+/* ---------------- Gmail acties ---------------- */
 
 function accountForMessage(id) {
   const message = state.messages.find(m => m.id === id);
@@ -433,15 +332,10 @@ function snoozeUntilTimestamp(kind) {
   return Date.now() + 60 * 60 * 1000;
 }
 
-async function cleanupExpiredSnoozes() {
+function cleanupExpiredSnoozes() {
   const now = Date.now();
   const dueIds = Object.entries(state.snoozed).filter(([, until]) => until <= now).map(([id]) => id);
-  for (const id of dueIds) {
-    const account = state.accounts.find(a => state.snoozed[id] !== undefined) || null;
-    // We don't retain full account/message context after removal from state.messages,
-    // so we re-add INBOX using every connected account's token that owns this id where possible.
-    delete state.snoozed[id];
-  }
+  dueIds.forEach(id => delete state.snoozed[id]);
   if (dueIds.length) persistSnoozed();
 }
 
@@ -450,18 +344,13 @@ async function cleanupExpiredSnoozes() {
 function decodeBase64Url(data) {
   if (!data) return "";
   const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
-  try {
-    return decodeURIComponent(escape(atob(base64)));
-  } catch (e) {
-    try { return atob(base64); } catch (e2) { return ""; }
-  }
+  try { return decodeURIComponent(escape(atob(base64))); }
+  catch (e) { try { return atob(base64); } catch (e2) { return ""; } }
 }
 
 function extractBody(payload) {
   if (!payload) return "";
-  if (payload.mimeType === "text/plain" && payload.body?.data) {
-    return decodeBase64Url(payload.body.data);
-  }
+  if (payload.mimeType === "text/plain" && payload.body?.data) return decodeBase64Url(payload.body.data);
   if (payload.parts) {
     const plain = payload.parts.find(p => p.mimeType === "text/plain");
     if (plain && plain.body?.data) return decodeBase64Url(plain.body.data);
@@ -472,9 +361,7 @@ function extractBody(payload) {
       if (nested) return nested;
     }
   }
-  if (payload.mimeType === "text/html" && payload.body?.data) {
-    return stripHtml(decodeBase64Url(payload.body.data));
-  }
+  if (payload.mimeType === "text/html" && payload.body?.data) return stripHtml(decodeBase64Url(payload.body.data));
   return "";
 }
 
@@ -506,8 +393,7 @@ async function openDetail(message) {
       headers: { Authorization: `Bearer ${account.token}` }
     });
     const data = await r.json();
-    const body = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
-    document.getElementById("detail-body").textContent = body;
+    document.getElementById("detail-body").textContent = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
   } catch (e) {
     document.getElementById("detail-body").textContent = message.snippet || "Kon bericht niet volledig laden.";
   }
@@ -517,11 +403,8 @@ async function sendReply(message, bodyText) {
   const toAddress = extractEmailAddress(message.from);
   const subject = message.subject.toLowerCase().startsWith("re:") ? message.subject : `Re: ${message.subject}`;
   await sendMail(message.accountEmail, {
-    to: toAddress,
-    subject,
-    body: bodyText,
-    inReplyTo: message.messageIdHeader,
-    threadId: message.threadId
+    to: toAddress, subject, body: bodyText,
+    inReplyTo: message.messageIdHeader, threadId: message.threadId
   });
 }
 
@@ -535,8 +418,7 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
     inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
     inReplyTo ? `References: ${inReplyTo}` : "",
     "Content-Type: text/plain; charset=UTF-8",
-    "",
-    body
+    "", body
   ].filter(Boolean).join("\r\n");
 
   const raw = btoa(unescape(encodeURIComponent(lines)))
@@ -550,6 +432,11 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
     headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+}
+
+function extractEmailAddress(from) {
+  const match = from.match(/<(.+)>/);
+  return match ? match[1] : from;
 }
 
 /* ---------------- Opstellen (nieuwe e-mail) ---------------- */
@@ -582,11 +469,6 @@ function wireComposeModal() {
   });
 }
 
-function extractEmailAddress(from) {
-  const match = from.match(/<(.+)>/);
-  return match ? match[1] : from;
-}
-
 /* ---------------- Notificaties ---------------- */
 
 function notifyNewMessages(messages) {
@@ -597,7 +479,97 @@ function notifyNewMessages(messages) {
   });
 }
 
-/* ---------------- Rendering ---------------- */
+/* ---------------- Google Calendar: fetch + merge ---------------- */
+
+function rangeBounds(range) {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  if (range === "today") end.setDate(end.getDate() + 1);
+  else if (range === "week") end.setDate(end.getDate() + 7);
+  else if (range === "month") end.setMonth(end.getMonth() + 1);
+  return { timeMin: start.toISOString(), timeMax: end.toISOString() };
+}
+
+async function refreshCalendar() {
+  const connected = state.accounts.filter(a => a.token);
+  if (connected.length === 0) { state.events = []; renderEvents(); return; }
+
+  const { timeMin, timeMax } = rangeBounds(state.activeRange);
+  const results = await Promise.all(connected.map(a => fetchAccountEvents(a, timeMin, timeMax)));
+  state.events = results.flat().sort((a, b) => a.start - b.start);
+  renderEvents();
+}
+
+async function fetchAccountEvents(account, timeMin, timeMax) {
+  try {
+    const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50" });
+    const r = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.items || []).map(ev => ({
+      id: ev.id,
+      accountEmail: account.email,
+      accountColor: account.color,
+      title: ev.summary || "(geen titel)",
+      location: ev.location || "",
+      description: ev.description || "",
+      start: new Date(ev.start?.dateTime || ev.start?.date).getTime(),
+      end: new Date(ev.end?.dateTime || ev.end?.date).getTime(),
+      allDay: !ev.start?.dateTime,
+      attendees: (ev.attendees || []).map(a => a.email)
+    }));
+  } catch (e) {
+    console.error("Kalender ophalen mislukt voor", account.email, e);
+    return [];
+  }
+}
+
+async function createEvent(accountEmail, data) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(buildEventBody(data))
+  });
+  refreshCalendar();
+}
+
+async function updateEvent(accountEmail, eventId, data) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(buildEventBody(data))
+  });
+  refreshCalendar();
+}
+
+async function deleteEvent(accountEmail, eventId) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${account.token}` }
+  });
+  refreshCalendar();
+}
+
+function buildEventBody({ title, start, end, allDay, location, description, guests }) {
+  const body = { summary: title, location, description };
+  if (allDay) { body.start = { date: start }; body.end = { date: end }; }
+  else { body.start = { dateTime: new Date(start).toISOString() }; body.end = { dateTime: new Date(end).toISOString() }; }
+  if (guests && guests.length) body.attendees = guests.map(email => ({ email }));
+  return body;
+}
+
+/* ---------------- Rendering: inbox ---------------- */
 
 function visibleMessages() {
   return state.messages.filter(m => {
@@ -606,8 +578,7 @@ function visibleMessages() {
     if (state.activeCategoryFilter && m.category !== state.activeCategoryFilter) return false;
     if (state.searchQuery) {
       const q = state.searchQuery.toLowerCase();
-      const haystack = `${m.from} ${m.subject} ${m.snippet}`.toLowerCase();
-      if (!haystack.includes(q)) return false;
+      if (!`${m.from} ${m.subject} ${m.snippet}`.toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -630,6 +601,172 @@ function renderFolderChips() {
     wrap.appendChild(chip);
   });
 }
+
+function renderChips() {
+  const wrap = document.getElementById("account-chips");
+  wrap.innerHTML = "";
+  const allChip = document.createElement("button");
+  allChip.className = "chip" + (state.activeAccountFilter === null ? " active" : "");
+  allChip.textContent = "Alle accounts";
+  allChip.addEventListener("click", () => { state.activeAccountFilter = null; renderChips(); renderMessages(); });
+  wrap.appendChild(allChip);
+
+  state.accounts.forEach(a => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (state.activeAccountFilter === a.email ? " active" : "");
+    chip.innerHTML = `<span class="chip-dot" style="background:${a.color}"></span>${a.email.split("@")[0]}`;
+    chip.addEventListener("click", () => { state.activeAccountFilter = a.email; renderChips(); renderMessages(); });
+    wrap.appendChild(chip);
+  });
+}
+
+function renderCategoryChips() {
+  const wrap = document.getElementById("category-chips");
+  wrap.innerHTML = "";
+  if (!state.settings.categorize) return;
+
+  const allChip = document.createElement("button");
+  allChip.className = "chip" + (state.activeCategoryFilter === null ? " active" : "");
+  allChip.textContent = "Alle categorieën";
+  allChip.addEventListener("click", () => { state.activeCategoryFilter = null; renderCategoryChips(); renderMessages(); });
+  wrap.appendChild(allChip);
+
+  Object.entries(CATEGORY_LABELS).forEach(([key, label]) => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (state.activeCategoryFilter === key ? " active" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => { state.activeCategoryFilter = key; renderCategoryChips(); renderMessages(); });
+    wrap.appendChild(chip);
+  });
+}
+
+function renderMessages() {
+  const list = document.getElementById("message-list");
+  const empty = document.getElementById("inbox-empty");
+  const filtered = visibleMessages();
+
+  list.innerHTML = "";
+  empty.classList.toggle("hidden", filtered.length > 0);
+
+  filtered.forEach(m => {
+    const li = document.createElement("li");
+    li.className = "message-row";
+    li.style.borderLeftColor = m.accountColor;
+
+    const rightLabel = ACTION_LABELS[state.settings.swipeRight];
+    const leftLabel = ACTION_LABELS[state.settings.swipeLeft];
+    const time = new Date(m.timestamp).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const categoryPill = state.settings.categorize ? `<span class="category-pill">${CATEGORY_LABELS[m.category]}</span>` : "";
+
+    li.innerHTML = `
+      <div class="swipe-bg">
+        <span>${leftLabel}</span>
+        <span>${rightLabel}</span>
+      </div>
+      <div class="message-row-inner">
+        <div class="row-top">
+          <span class="message-from">${escapeHtml(stripAngle(m.from))}${categoryPill}</span>
+          <span class="message-time">${time}</span>
+        </div>
+        <div class="message-subject">${escapeHtml(m.subject)}</div>
+        <div class="message-snippet">${escapeHtml(m.snippet)}</div>
+      </div>
+    `;
+    li.addEventListener("click", () => { if (li.dataset.swiping !== "1") openDetail(m); });
+    wireSwipe(li, m.id);
+    list.appendChild(li);
+  });
+}
+
+function runAction(action, id) {
+  if (action === "archive") return archiveMessage(id);
+  if (action === "trash") return trashMessage(id);
+  if (action === "snooze1h") return snoozeMessage(id, snoozeUntilTimestamp("1h"));
+}
+
+function wireSwipe(li, id) {
+  const inner = li.querySelector(".message-row-inner");
+  let startX = 0, currentX = 0, dragging = false;
+
+  li.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+    dragging = true;
+    li.dataset.swiping = "0";
+  }, { passive: true });
+
+  li.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    currentX = e.touches[0].clientX - startX;
+    if (Math.abs(currentX) > 8) li.dataset.swiping = "1";
+    inner.style.transform = `translateX(${currentX}px)`;
+  }, { passive: true });
+
+  li.addEventListener("touchend", () => {
+    dragging = false;
+    const threshold = 90;
+    if (currentX > threshold) runAction(state.settings.swipeRight, id);
+    else if (currentX < -threshold) runAction(state.settings.swipeLeft, id);
+    else inner.style.transform = "translateX(0)";
+    currentX = 0;
+    setTimeout(() => { li.dataset.swiping = "0"; }, 50);
+  });
+}
+
+function renderAccounts() {
+  const list = document.getElementById("accounts-list");
+  list.innerHTML = "";
+  state.accounts.forEach(a => {
+    const li = document.createElement("li");
+    li.className = "account-row";
+    const initials = a.email.slice(0, 2).toUpperCase();
+    li.innerHTML = `
+      <div class="account-info">
+        <div class="account-avatar" style="background:${a.color}">${initials}</div>
+        <div>
+          <div class="account-email">${escapeHtml(a.email)}</div>
+          <div class="account-status">${a.token ? "Verbonden" : "Opnieuw verbinden nodig"}</div>
+        </div>
+      </div>
+      <button class="account-delete" data-email="${a.email}">Verwijderen</button>
+    `;
+    list.appendChild(li);
+  });
+  list.querySelectorAll(".account-delete").forEach(btn => {
+    btn.addEventListener("click", () => removeAccount(btn.dataset.email));
+  });
+}
+
+function renderRules() {
+  const list = document.getElementById("rules-list");
+  const empty = document.getElementById("rules-empty");
+  list.innerHTML = "";
+  empty.classList.toggle("hidden", state.rules.length > 0);
+
+  const actionLabel = { archive: "Archiveert", label: "Labelt", autoreply: "Auto-reply" };
+
+  state.rules.forEach((rule, idx) => {
+    const li = document.createElement("li");
+    li.className = "rule-row";
+    const conditionParts = [];
+    if (rule.from) conditionParts.push(`afzender bevat <b>${escapeHtml(rule.from)}</b>`);
+    if (rule.subject) conditionParts.push(`onderwerp bevat <b>${escapeHtml(rule.subject)}</b>`);
+    li.innerHTML = `
+      <div class="rule-condition">${conditionParts.join(" of ")}</div>
+      <span class="rule-action-tag">${actionLabel[rule.action]}</span>
+      <button class="rule-delete" data-idx="${idx}">✕</button>
+    `;
+    list.appendChild(li);
+  });
+  list.querySelectorAll(".rule-delete").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.rules.splice(parseInt(btn.dataset.idx, 10), 1);
+      persistRules();
+      renderRules();
+    });
+  });
+}
+
+/* ---------------- Rendering: kalender ---------------- */
 
 function renderCalendarAccountChips() {
   const wrap = document.getElementById("calendar-account-chips");
@@ -664,9 +801,7 @@ function renderRangeChips() {
 function renderEvents() {
   const list = document.getElementById("event-list");
   const empty = document.getElementById("calendar-empty");
-  const filtered = state.events.filter(e =>
-    !state.activeCalendarAccountFilter || e.accountEmail === state.activeCalendarAccountFilter
-  );
+  const filtered = state.events.filter(e => !state.activeCalendarAccountFilter || e.accountEmail === state.activeCalendarAccountFilter);
   list.innerHTML = "";
   empty.classList.toggle("hidden", filtered.length > 0);
 
@@ -677,7 +812,6 @@ function renderEvents() {
       const heading = document.createElement("li");
       heading.className = "event-day-heading";
       heading.textContent = dayKey;
-      heading.style.listStyle = "none";
       list.appendChild(heading);
       lastDay = dayKey;
     }
@@ -696,8 +830,6 @@ function renderEvents() {
     list.appendChild(li);
   });
 }
-
-/* ---------------- Event modal (aanmaken / bewerken) ---------------- */
 
 let activeEditEvent = null;
 
@@ -761,18 +893,14 @@ function wireEventModal() {
     if (!title || !startVal || !endVal) { alert("Vul minstens een titel, begin- en eindtijd in."); return; }
 
     const data = {
-      title,
-      allDay,
+      title, allDay,
       start: allDay ? startVal.slice(0, 10) : startVal,
       end: allDay ? endVal.slice(0, 10) : endVal,
       location, description, guests
     };
 
-    if (activeEditEvent) {
-      updateEvent(accountEmail, activeEditEvent.id, data);
-    } else {
-      createEvent(accountEmail, data);
-    }
+    if (activeEditEvent) updateEvent(accountEmail, activeEditEvent.id, data);
+    else createEvent(accountEmail, data);
     modal.classList.add("hidden");
   });
 
@@ -784,178 +912,7 @@ function wireEventModal() {
   });
 }
 
-function renderChips() {
-  const wrap = document.getElementById("account-chips");
-  wrap.innerHTML = "";
-  const allChip = document.createElement("button");
-  allChip.className = "chip" + (state.activeAccountFilter === null ? " active" : "");
-  allChip.textContent = "Alle accounts";
-  allChip.addEventListener("click", () => { state.activeAccountFilter = null; renderChips(); renderMessages(); });
-  wrap.appendChild(allChip);
-
-  state.accounts.forEach(a => {
-    const chip = document.createElement("button");
-    chip.className = "chip" + (state.activeAccountFilter === a.email ? " active" : "");
-    chip.innerHTML = `<span class="chip-dot" style="background:${a.color}"></span>${a.email.split("@")[0]}`;
-    chip.addEventListener("click", () => { state.activeAccountFilter = a.email; renderChips(); renderMessages(); });
-    wrap.appendChild(chip);
-  });
-}
-
-function renderCategoryChips() {
-  const wrap = document.getElementById("category-chips");
-  wrap.innerHTML = "";
-  if (!state.settings.categorize) return;
-
-  const allChip = document.createElement("button");
-  allChip.className = "chip" + (state.activeCategoryFilter === null ? " active" : "");
-  allChip.textContent = "Alle categorieën";
-  allChip.addEventListener("click", () => { state.activeCategoryFilter = null; renderCategoryChips(); renderMessages(); });
-  wrap.appendChild(allChip);
-
-  Object.entries(CATEGORY_LABELS).forEach(([key, label]) => {
-    const chip = document.createElement("button");
-    chip.className = "chip" + (state.activeCategoryFilter === key ? " active" : "");
-    chip.textContent = label;
-    chip.addEventListener("click", () => { state.activeCategoryFilter = key; renderCategoryChips(); renderMessages(); });
-    wrap.appendChild(chip);
-  });
-}
-
-function renderMessages() {
-  const list = document.getElementById("message-list");
-  const empty = document.getElementById("inbox-empty");
-  const filtered = visibleMessages();
-
-  list.innerHTML = "";
-  empty.classList.toggle("hidden", filtered.length > 0);
-
-  filtered.forEach(m => {
-    const li = document.createElement("li");
-    li.className = "message-row";
-    li.style.borderLeftColor = m.accountColor;
-
-    const rightLabel = ACTION_LABELS[state.settings.swipeRight];
-    const leftLabel = ACTION_LABELS[state.settings.swipeLeft];
-    const time = new Date(m.timestamp).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-    const categoryPill = state.settings.categorize ? `<span class="category-pill">${CATEGORY_LABELS[m.category]}</span>` : "";
-
-    li.innerHTML = `
-      <div class="swipe-bg">
-        <span class="swipe-left-label">${leftLabel}</span>
-        <span class="swipe-right-label">${rightLabel}</span>
-      </div>
-      <div class="message-row-inner">
-        <div class="row-top">
-          <span class="message-from">${escapeHtml(stripAngle(m.from))}${categoryPill}</span>
-          <span class="message-time">${time}</span>
-        </div>
-        <div class="message-subject">${escapeHtml(m.subject)}</div>
-        <div class="message-snippet">${escapeHtml(m.snippet)}</div>
-      </div>
-    `;
-    li.addEventListener("click", (e) => {
-      if (li.dataset.swiping === "1") return;
-      openDetail(m);
-    });
-    wireSwipe(li, m.id);
-    list.appendChild(li);
-  });
-}
-
-const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
-
-function runAction(action, id) {
-  if (action === "archive") return archiveMessage(id);
-  if (action === "trash") return trashMessage(id);
-  if (action === "snooze1h") return snoozeMessage(id, snoozeUntilTimestamp("1h"));
-}
-
-function wireSwipe(li, id) {
-  const inner = li.querySelector(".message-row-inner");
-  let startX = 0, currentX = 0, dragging = false;
-
-  li.addEventListener("touchstart", (e) => {
-    startX = e.touches[0].clientX;
-    dragging = true;
-    li.dataset.swiping = "0";
-  }, { passive: true });
-
-  li.addEventListener("touchmove", (e) => {
-    if (!dragging) return;
-    currentX = e.touches[0].clientX - startX;
-    if (Math.abs(currentX) > 8) li.dataset.swiping = "1";
-    inner.style.transform = `translateX(${currentX}px)`;
-  }, { passive: true });
-
-  li.addEventListener("touchend", () => {
-    dragging = false;
-    const threshold = 90;
-    if (currentX > threshold) {
-      runAction(state.settings.swipeRight, id);
-    } else if (currentX < -threshold) {
-      runAction(state.settings.swipeLeft, id);
-    } else {
-      inner.style.transform = "translateX(0)";
-    }
-    currentX = 0;
-    setTimeout(() => { li.dataset.swiping = "0"; }, 50);
-  });
-}
-
-function renderAccounts() {
-  const list = document.getElementById("accounts-list");
-  list.innerHTML = "";
-  state.accounts.forEach(a => {
-    const li = document.createElement("li");
-    li.className = "account-row";
-    const initials = a.email.slice(0, 2).toUpperCase();
-    li.innerHTML = `
-      <div class="account-info">
-        <div class="account-avatar" style="background:${a.color}">${initials}</div>
-        <div>
-          <div class="account-email">${escapeHtml(a.email)}</div>
-          <div class="account-status">${a.token ? "Verbonden" : "Opnieuw verbinden nodig"}</div>
-        </div>
-      </div>
-      <button class="account-delete" data-email="${a.email}">Verwijderen</button>
-    `;
-    list.appendChild(li);
-  });
-  list.querySelectorAll(".account-delete").forEach(btn => {
-    btn.addEventListener("click", () => removeAccount(btn.dataset.email));
-  });
-}
-
-function renderRules() {
-  const list = document.getElementById("rules-list");
-  const empty = document.getElementById("rules-empty");
-  list.innerHTML = "";
-  empty.classList.toggle("hidden", state.rules.length > 0);
-
-  const actionLabel = { archive: "Archiveert", label: "Labelt", autoreply: "Auto-reply" };
-
-  state.rules.forEach((rule, idx) => {
-    const li = document.createElement("li");
-    li.className = "rule-row";
-    const conditionParts = [];
-    if (rule.from) conditionParts.push(`afzender bevat <b>${escapeHtml(rule.from)}</b>`);
-    if (rule.subject) conditionParts.push(`onderwerp bevat <b>${escapeHtml(rule.subject)}</b>`);
-    li.innerHTML = `
-      <div class="rule-condition">${conditionParts.join(" of ")}</div>
-      <span class="rule-action-tag">${actionLabel[rule.action]}</span>
-      <button class="rule-delete" data-idx="${idx}">✕</button>
-    `;
-    list.appendChild(li);
-  });
-  list.querySelectorAll(".rule-delete").forEach(btn => {
-    btn.addEventListener("click", () => {
-      state.rules.splice(parseInt(btn.dataset.idx, 10), 1);
-      persistRules();
-      renderRules();
-    });
-  });
-}
+/* ---------------- Helpers ---------------- */
 
 function stripAngle(from) { return from.replace(/<.*>/, "").trim() || from; }
 
@@ -979,8 +936,6 @@ function wireNav() {
     });
   });
 }
-
-/* ---------------- Zoeken ---------------- */
 
 function wireSearch() {
   document.getElementById("search-input").addEventListener("input", (e) => {
@@ -1010,9 +965,8 @@ function wireRuleModal() {
 
   actionSelect.addEventListener("change", updateActionValueVisibility);
   function updateActionValueVisibility() {
-    if (actionSelect.value === "archive") {
-      valueWrap.classList.add("hidden");
-    } else {
+    if (actionSelect.value === "archive") valueWrap.classList.add("hidden");
+    else {
       valueWrap.classList.remove("hidden");
       valueLabel.textContent = actionSelect.value === "label" ? "Label naam" : "Auto-reply tekst";
     }
@@ -1134,7 +1088,7 @@ function wireSettings() {
 function startPolling() {
   if (state.pollHandle) clearInterval(state.pollHandle);
   const minutes = state.settings.pollIntervalMinutes;
-  if (!minutes) return; // 0 = handmatig
+  if (!minutes) return;
   state.pollHandle = setInterval(() => {
     if (state.accounts.some(a => a.token)) { refreshInbox(); refreshCalendar(); }
   }, minutes * 60 * 1000);
