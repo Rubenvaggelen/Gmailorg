@@ -412,6 +412,56 @@ async function fetchAccountMessages(account) {
   }
 }
 
+function mapMicrosoftMessage(d, account) {
+  const fromAddr = d.from?.emailAddress?.address || "";
+  const fromName = d.from?.emailAddress?.name || fromAddr;
+  const headers = d.internetMessageHeaders || [];
+  const getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+  const message = {
+    id: d.id,
+    threadId: d.conversationId,
+    accountEmail: account.email,
+    accountColor: account.color,
+    from: fromName && fromAddr ? `${fromName} <${fromAddr}>` : (fromAddr || "Onbekend"),
+    subject: d.subject || "(geen onderwerp)",
+    snippet: d.bodyPreview || "",
+    timestamp: new Date(d.receivedDateTime).getTime() || 0,
+    messageIdHeader: d.internetMessageId || "",
+    hasListUnsubscribe: Boolean(getHeader("List-Unsubscribe")),
+    labelIds: []
+  };
+  message.category = classifyMessage(message);
+  return message;
+}
+
+async function fetchAllMicrosoftMessages(account, { select, top = 100, maxPages = 20, extraParams = "" } = {}) {
+  const results = [];
+  let url = `https://graph.microsoft.com/v1.0/me/messages?$top=${top}&$select=${select}${extraParams}`;
+  let pages = 0;
+  while (url && pages < maxPages) {
+    try {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${account.token}` } });
+      if (!r.ok) break;
+      const data = await r.json();
+      results.push(...(data.value || []));
+      url = data["@odata.nextLink"] || null;
+      pages += 1;
+    } catch (e) {
+      console.error("Microsoft-berichten ophalen mislukt voor", account.email, e);
+      break;
+    }
+  }
+  return results;
+}
+
+async function moveMicrosoftMessagesBulk(account, ids, destinationId) {
+  const chunkSize = 10; // gelijktijdige aanvragen, om de Graph API niet te overbelasten
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    await Promise.all(chunk.map(id => moveMicrosoftMessage(account, id, destinationId)));
+  }
+}
+
 async function fetchMicrosoftMessages(account) {
   try {
     const count = state.settings.fetchCount;
@@ -423,26 +473,7 @@ async function fetchMicrosoftMessages(account) {
     );
     if (!r.ok) return [];
     const data = await r.json();
-
-    return (data.value || []).map(d => {
-      const fromAddr = d.from?.emailAddress?.address || "";
-      const fromName = d.from?.emailAddress?.name || fromAddr;
-      const message = {
-        id: d.id,
-        threadId: d.conversationId,
-        accountEmail: account.email,
-        accountColor: account.color,
-        from: fromName && fromAddr ? `${fromName} <${fromAddr}>` : (fromAddr || "Onbekend"),
-        subject: d.subject || "(geen onderwerp)",
-        snippet: d.bodyPreview || "",
-        timestamp: new Date(d.receivedDateTime).getTime() || 0,
-        messageIdHeader: d.internetMessageId || "",
-        hasListUnsubscribe: false, // Graph API levert dit niet zonder extra aanroep
-        labelIds: []
-      };
-      message.category = classifyMessage(message);
-      return message;
-    });
+    return (data.value || []).map(d => mapMicrosoftMessage(d, account));
   } catch (e) {
     console.error("Fetch (Microsoft) mislukt voor", account.email, e);
     return [];
@@ -452,6 +483,7 @@ async function fetchMicrosoftMessages(account) {
 /* ---------------- Webshopmail automatisch naar map verplaatsen ---------------- */
 
 async function getOrCreateWebshopLabelId(account) {
+  if (account.provider === "microsoft") return getOrCreateMicrosoftWebshopFolderId(account);
   if (state.webshopLabelIds[account.email]) return state.webshopLabelIds[account.email];
   try {
     const listResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
@@ -482,85 +514,122 @@ async function getOrCreateWebshopLabelId(account) {
   }
 }
 
+async function getOrCreateMicrosoftWebshopFolderId(account) {
+  const cacheKey = account.email + ":ms";
+  if (state.webshopLabelIds[cacheKey]) return state.webshopLabelIds[cacheKey];
+  try {
+    const listResp = await fetch(
+      `https://graph.microsoft.com/v1.0/me/mailFolders?$filter=${encodeURIComponent(`displayName eq '${WEBSHOP_LABEL_NAME}'`)}`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    const listData = await listResp.json();
+    let folder = (listData.value || [])[0];
+
+    if (!folder) {
+      const createResp = await fetch("https://graph.microsoft.com/v1.0/me/mailFolders", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: WEBSHOP_LABEL_NAME })
+      });
+      if (!createResp.ok) return null;
+      folder = await createResp.json();
+    }
+
+    state.webshopLabelIds[cacheKey] = folder.id;
+    return folder.id;
+  } catch (e) {
+    console.error("Kon Webshops-map niet ophalen/aanmaken voor", account.email, e);
+    return null;
+  }
+}
+
 async function autoMoveWebshopMail(connectedAccounts, messages) {
   for (const account of connectedAccounts) {
-    if (account.provider === "microsoft") continue; // labels-systeem verschilt bij Outlook, nog niet ondersteund
-    const labelId = state.webshopLabelIds[account.email] || await getOrCreateWebshopLabelId(account);
+    const cacheKey = account.provider === "microsoft" ? account.email + ":ms" : account.email;
+    const labelId = state.webshopLabelIds[cacheKey] || await getOrCreateWebshopLabelId(account);
     if (!labelId) continue;
 
     const toMove = messages.filter(m =>
       m.accountEmail === account.email &&
       m.category === "webshop" &&
-      !m.labelIds.includes(labelId)
+      !(m.labelIds || []).includes(labelId)
     );
     if (toMove.length === 0) continue;
 
-    await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ids: toMove.map(m => m.id),
-        addLabelIds: [labelId],
-        removeLabelIds: ["INBOX"]
-      })
-    });
+    const ids = toMove.map(m => m.id);
+    if (account.provider === "microsoft") {
+      await moveMicrosoftMessagesBulk(account, ids, labelId);
+    } else {
+      await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, addLabelIds: [labelId], removeLabelIds: ["INBOX"] })
+      });
+    }
 
     // Lokaal ook meteen uit Postvak IN halen, zodat het gelijk klopt in beeld.
-    const movedIds = new Set(toMove.map(m => m.id));
+    const movedIds = new Set(ids);
     state.messages = state.messages.filter(m => !movedIds.has(m.id));
   }
 }
 
 /* ---------------- Oude webshopmail met terugwerkende kracht verplaatsen ---------------- */
 
-async function backfillWebshopMail(onProgress) {
-  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
-  const results = [];
+async function findWebshopMessageIdsForAccount(account) {
+  if (account.provider === "microsoft") {
+    const msgs = await fetchAllMicrosoftMessages(account, {
+      select: "id,subject,from,internetMessageHeaders"
+    });
+    return msgs
+      .map(d => mapMicrosoftMessage(d, account))
+      .filter(m => m.category === "webshop")
+      .map(m => m.id);
+  }
 
-  for (const account of connected) {
-    onProgress(`Bezig met ${account.email}...`);
-    const labelId = await getOrCreateWebshopLabelId(account);
-    if (!labelId) { results.push(`${account.email}: mislukt`); continue; }
+  // Gmail: zoekopdracht op basis van de bekende domeinenlijst, in kleine
+  // stukken zodat de query niet te lang wordt.
+  const chunkSize = 20;
+  const idSet = new Set();
+  for (let i = 0; i < WEBSHOP_DOMAINS.length; i += chunkSize) {
+    const chunk = WEBSHOP_DOMAINS.slice(i, i + chunkSize);
+    const q = "in:inbox (" + chunk.map(d => `from:${d}`).join(" OR ") + ")";
+    let pageToken = null;
+    let pages = 0;
+    do {
+      const params = new URLSearchParams({ q, maxResults: "500" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const r = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${account.token}` } }
+      );
+      if (!r.ok) break;
+      const data = await r.json();
+      (data.messages || []).forEach(m => idSet.add(m.id));
+      pageToken = data.nextPageToken || null;
+      pages += 1;
+    } while (pageToken && pages < 5);
+  }
+  return [...idSet];
+}
 
-    // Bouw een zoekopdracht op basis van de bekende domeinenlijst, in kleine
-    // stukken zodat de query niet te lang wordt.
-    const chunkSize = 20;
-    const idSet = new Set();
-    for (let i = 0; i < WEBSHOP_DOMAINS.length; i += chunkSize) {
-      const chunk = WEBSHOP_DOMAINS.slice(i, i + chunkSize);
-      const q = "in:inbox (" + chunk.map(d => `from:${d}`).join(" OR ") + ")";
-      let pageToken = null;
-      let pages = 0;
-      do {
-        const params = new URLSearchParams({ q, maxResults: "500" });
-        if (pageToken) params.set("pageToken", pageToken);
-        const r = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${account.token}` } }
-        );
-        if (!r.ok) break;
-        const data = await r.json();
-        (data.messages || []).forEach(m => idSet.add(m.id));
-        pageToken = data.nextPageToken || null;
-        pages += 1;
-      } while (pageToken && pages < 5);
-    }
-
-    const ids = [...idSet];
+async function applyWebshopMove(account, ids) {
+  const labelId = await getOrCreateWebshopLabelId(account);
+  if (!labelId) return false;
+  if (account.provider === "microsoft") {
+    await moveMicrosoftMessagesBulk(account, ids, labelId);
+  } else {
     for (let i = 0; i < ids.length; i += 1000) {
-      const idsChunk = ids.slice(i, i + 1000);
+      const chunk = ids.slice(i, i + 1000);
       await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
         method: "POST",
         headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: idsChunk, addLabelIds: [labelId], removeLabelIds: ["INBOX"] })
+        body: JSON.stringify({ ids: chunk, addLabelIds: [labelId], removeLabelIds: ["INBOX"] })
       });
     }
-    results.push(`${account.email}: ${ids.length}`);
   }
-
-  if (state.activeFolder === "INBOX") refreshInbox();
-  return results;
+  return true;
 }
+
 
 function classifyMessage(message) {
   if (looksLikeWebshopMail(message)) return "webshop";
@@ -1677,7 +1746,7 @@ function wireBulkNameCleanup() {
   document.getElementById("bulk-name-search-btn").addEventListener("click", async () => {
     const name = input.value.trim();
     if (!name) { alert("Vul eerst een afzendernaam in, bijv. Zalando."); return; }
-    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
+    const connected = state.accounts.filter(a => a.token);
     if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
 
     resultBox.classList.add("hidden");
@@ -1742,6 +1811,15 @@ function wireBulkNameCleanup() {
 }
 
 async function fetchMessageIdsByFromName(account, name) {
+  if (account.provider === "microsoft") {
+    const encoded = encodeURIComponent(`"from:${name}"`);
+    const msgs = await fetchAllMicrosoftMessages(account, {
+      select: "id",
+      extraParams: `&$search=${encoded}`
+    });
+    return msgs.map(m => m.id);
+  }
+
   const ids = [];
   let pageToken = null;
   let pages = 0;
@@ -1772,28 +1850,90 @@ function wireWebshopSettings() {
   });
 
   const statusEl = document.getElementById("backfill-webshop-status");
-  document.getElementById("backfill-webshop-btn").addEventListener("click", async () => {
-    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
+  const resultBox = document.getElementById("backfill-webshop-result");
+  const countEl = document.getElementById("backfill-webshop-count");
+
+  let foundPerAccount = []; // [{ account, ids }]
+
+  document.getElementById("backfill-webshop-search-btn").addEventListener("click", async () => {
+    const connected = state.accounts.filter(a => a.token);
     if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
+
+    resultBox.classList.add("hidden");
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Bezig...";
-    const results = await backfillWebshopMail((msg) => { statusEl.textContent = msg; });
-    statusEl.textContent = "Klaar — " + results.join(" · ");
+    statusEl.textContent = "Zoeken...";
+
+    foundPerAccount = [];
+    let total = 0;
+    for (const account of connected) {
+      statusEl.textContent = `Zoeken bij ${account.email}...`;
+      try {
+        const ids = await findWebshopMessageIdsForAccount(account);
+        foundPerAccount.push({ account, ids });
+        total += ids.length;
+      } catch (e) {
+        console.error("Webshopmail zoeken mislukt voor", account.email, e);
+        foundPerAccount.push({ account, ids: [] });
+      }
+    }
+
+    statusEl.classList.add("hidden");
+    if (total === 0) {
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = "Geen webshopmail gevonden.";
+      return;
+    }
+    countEl.textContent = `${total} berichten gevonden. Wat wil je ermee doen?`;
+    resultBox.classList.remove("hidden");
   });
+
+  document.getElementById("backfill-webshop-move-btn").addEventListener("click", () => runWebshopAction("move"));
+  document.getElementById("backfill-webshop-trash-btn").addEventListener("click", () => runWebshopAction("trash"));
+
+  async function runWebshopAction(action) {
+    resultBox.classList.add("hidden");
+    statusEl.classList.remove("hidden");
+    let total = 0;
+    const perAccountLabels = [];
+
+    for (const { account, ids } of foundPerAccount) {
+      if (ids.length === 0) continue;
+      statusEl.textContent = `Bezig bij ${account.email}...`;
+      try {
+        if (action === "move") await applyWebshopMove(account, ids);
+        else await bulkModifyMessages(account, ids, "trash");
+        total += ids.length;
+        perAccountLabels.push(`${account.email}: ${ids.length}`);
+      } catch (e) {
+        console.error("Verwerken mislukt voor", account.email, e);
+        perAccountLabels.push(`${account.email}: mislukt`);
+      }
+    }
+
+    const actionLabel = action === "move" ? "verplaatst naar Webshops" : "naar de prullenbak verplaatst";
+    statusEl.textContent = `Klaar — ${total} berichten ${actionLabel}.\n` + perAccountLabels.join(" · ");
+
+    if (state.activeFolder === "INBOX") refreshInbox();
+  }
 }
 
 /* ---------------- Promotiemail opruimen (eenmalige bulkactie) ---------------- */
 
 function wireCleanupModal() {
   const modal = document.getElementById("cleanup-modal");
+  const searchRow = document.getElementById("cleanup-search-row");
   const choiceBox = document.getElementById("cleanup-choice");
+  const countEl = document.getElementById("cleanup-count");
   const progressBox = document.getElementById("cleanup-progress");
   const resultBox = document.getElementById("cleanup-result");
   const statusEl = document.getElementById("cleanup-status");
   const resultEl = document.getElementById("cleanup-result-text");
 
+  let foundPerAccount = []; // [{ account, ids }]
+
   document.getElementById("cleanup-promotions-btn").addEventListener("click", () => {
-    choiceBox.classList.remove("hidden");
+    searchRow.classList.remove("hidden");
+    choiceBox.classList.add("hidden");
     progressBox.classList.add("hidden");
     resultBox.classList.add("hidden");
     modal.classList.remove("hidden");
@@ -1801,15 +1941,44 @@ function wireCleanupModal() {
 
   document.getElementById("cleanup-close").addEventListener("click", () => modal.classList.add("hidden"));
 
+  document.getElementById("cleanup-search-btn").addEventListener("click", async () => {
+    const connected = state.accounts.filter(a => a.token);
+    if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
+
+    searchRow.classList.add("hidden");
+    progressBox.classList.remove("hidden");
+    statusEl.textContent = "Zoeken...";
+
+    foundPerAccount = [];
+    let total = 0;
+    for (const account of connected) {
+      statusEl.textContent = `Zoeken bij ${account.email}...`;
+      try {
+        const ids = await fetchPromotionMessageIds(account);
+        foundPerAccount.push({ account, ids });
+        total += ids.length;
+      } catch (e) {
+        console.error("Zoeken mislukt voor", account.email, e);
+        foundPerAccount.push({ account, ids: [] });
+      }
+    }
+
+    progressBox.classList.add("hidden");
+    if (total === 0) {
+      searchRow.classList.remove("hidden");
+      statusEl.classList.remove("hidden");
+      progressBox.classList.remove("hidden");
+      statusEl.textContent = "Geen promotiemail gevonden.";
+      return;
+    }
+    countEl.textContent = `${total} berichten gevonden. Wat wil je ermee doen?`;
+    choiceBox.classList.remove("hidden");
+  });
+
   document.getElementById("cleanup-archive-btn").addEventListener("click", () => runCleanup("archive"));
   document.getElementById("cleanup-trash-btn").addEventListener("click", () => runCleanup("trash"));
 
   async function runCleanup(action) {
-    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
-    if (connected.length === 0) {
-      alert("Verbind eerst minstens één account.");
-      return;
-    }
     choiceBox.classList.add("hidden");
     progressBox.classList.remove("hidden");
     resultBox.classList.add("hidden");
@@ -1817,13 +1986,11 @@ function wireCleanupModal() {
     let totalHandled = 0;
     const perAccountResults = [];
 
-    for (const account of connected) {
-      statusEl.textContent = `Bezig met ${account.email}...`;
+    for (const { account, ids } of foundPerAccount) {
+      if (ids.length === 0) continue;
+      statusEl.textContent = `Bezig bij ${account.email}...`;
       try {
-        const ids = await fetchPromotionMessageIds(account);
-        if (ids.length > 0) {
-          await bulkModifyMessages(account, ids, action);
-        }
+        await bulkModifyMessages(account, ids, action);
         totalHandled += ids.length;
         perAccountResults.push(`${account.email}: ${ids.length}`);
       } catch (e) {
@@ -1843,6 +2010,20 @@ function wireCleanupModal() {
 }
 
 async function fetchPromotionMessageIds(account) {
+  if (account.provider === "microsoft") {
+    // Outlook heeft geen "Promoties"-categorie zoals Gmail — als benadering
+    // gebruiken we hetzelfde kenmerk als bij nieuwsbrieven: een
+    // List-Unsubscribe-header (commerciële afzenders hebben die vrijwel
+    // altijd, persoonlijke mail nooit).
+    const msgs = await fetchAllMicrosoftMessages(account, {
+      select: "id,subject,from,internetMessageHeaders"
+    });
+    return msgs
+      .map(d => mapMicrosoftMessage(d, account))
+      .filter(m => m.hasListUnsubscribe)
+      .map(m => m.id);
+  }
+
   const ids = [];
   let pageToken = null;
   let pages = 0;
@@ -1868,6 +2049,12 @@ async function fetchPromotionMessageIds(account) {
 }
 
 async function bulkModifyMessages(account, ids, action) {
+  if (account.provider === "microsoft") {
+    const destinationId = action === "archive" ? "archive" : "deleteditems";
+    await moveMicrosoftMessagesBulk(account, ids, destinationId);
+    return;
+  }
+
   const body = action === "archive"
     ? { removeLabelIds: ["INBOX"] }
     : { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX", "UNREAD"] };
