@@ -1495,35 +1495,76 @@ function wireSettings() {
 function wireBulkNameCleanup() {
   const input = document.getElementById("bulk-name-input");
   const statusEl = document.getElementById("bulk-name-status");
+  const resultBox = document.getElementById("bulk-name-result");
+  const countEl = document.getElementById("bulk-name-count");
 
-  document.getElementById("bulk-name-archive-btn").addEventListener("click", () => runBulkNameCleanup("archive"));
-  document.getElementById("bulk-name-trash-btn").addEventListener("click", () => runBulkNameCleanup("trash"));
+  // Bewaart de al-gevonden id's per account tussen 'Zoeken' en de
+  // uiteindelijke actie, zodat er niet twee keer gezocht hoeft te worden.
+  let foundName = "";
+  let foundPerAccount = []; // [{ account, ids }]
 
-  async function runBulkNameCleanup(action) {
+  document.getElementById("bulk-name-search-btn").addEventListener("click", async () => {
     const name = input.value.trim();
     if (!name) { alert("Vul eerst een afzendernaam in, bijv. Zalando."); return; }
     const connected = state.accounts.filter(a => a.token);
     if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
 
+    resultBox.classList.add("hidden");
     statusEl.classList.remove("hidden");
+    statusEl.textContent = "Zoeken...";
+
+    foundName = name;
+    foundPerAccount = [];
     let total = 0;
-    const perAccount = [];
 
     for (const account of connected) {
       statusEl.textContent = `Zoeken bij ${account.email}...`;
       try {
         const ids = await fetchMessageIdsByFromName(account, name);
-        if (ids.length > 0) await bulkModifyMessages(account, ids, action);
+        foundPerAccount.push({ account, ids });
         total += ids.length;
-        perAccount.push(`${account.email}: ${ids.length}`);
       } catch (e) {
-        console.error("Verwijderen op naam mislukt voor", account.email, e);
-        perAccount.push(`${account.email}: mislukt`);
+        console.error("Zoeken op naam mislukt voor", account.email, e);
+        foundPerAccount.push({ account, ids: [] });
+      }
+    }
+
+    statusEl.classList.add("hidden");
+
+    if (total === 0) {
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = `Geen berichten gevonden van "${name}".`;
+      return;
+    }
+
+    countEl.textContent = `${total} berichten gevonden van "${name}". Wat wil je ermee doen?`;
+    resultBox.classList.remove("hidden");
+  });
+
+  document.getElementById("bulk-name-archive-btn").addEventListener("click", () => runBulkNameAction("archive"));
+  document.getElementById("bulk-name-trash-btn").addEventListener("click", () => runBulkNameAction("trash"));
+
+  async function runBulkNameAction(action) {
+    resultBox.classList.add("hidden");
+    statusEl.classList.remove("hidden");
+    let total = 0;
+    const perAccountLabels = [];
+
+    for (const { account, ids } of foundPerAccount) {
+      if (ids.length === 0) continue;
+      statusEl.textContent = `Bezig bij ${account.email}...`;
+      try {
+        await bulkModifyMessages(account, ids, action);
+        total += ids.length;
+        perAccountLabels.push(`${account.email}: ${ids.length}`);
+      } catch (e) {
+        console.error("Verwerken mislukt voor", account.email, e);
+        perAccountLabels.push(`${account.email}: mislukt`);
       }
     }
 
     const actionLabel = action === "archive" ? "gearchiveerd" : "naar de prullenbak verplaatst";
-    statusEl.textContent = `Klaar — ${total} berichten van "${name}" ${actionLabel}.\n` + perAccount.join(" · ");
+    statusEl.textContent = `Klaar — ${total} berichten van "${foundName}" ${actionLabel}.\n` + perAccountLabels.join(" · ");
 
     if (state.activeFolder === "INBOX") refreshInbox();
   }
