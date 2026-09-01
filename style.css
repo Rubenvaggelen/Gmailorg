@@ -785,3 +785,9 @@ main {
 .restaurant-website:active {
   opacity: 0.7;
 }
+
+.restaurant-meta {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
