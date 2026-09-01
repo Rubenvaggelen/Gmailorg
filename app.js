@@ -1489,6 +1489,66 @@ function wireSettings() {
 
   wireCleanupModal();
   wireWebshopSettings();
+  wireBulkNameCleanup();
+}
+
+function wireBulkNameCleanup() {
+  const input = document.getElementById("bulk-name-input");
+  const statusEl = document.getElementById("bulk-name-status");
+
+  document.getElementById("bulk-name-archive-btn").addEventListener("click", () => runBulkNameCleanup("archive"));
+  document.getElementById("bulk-name-trash-btn").addEventListener("click", () => runBulkNameCleanup("trash"));
+
+  async function runBulkNameCleanup(action) {
+    const name = input.value.trim();
+    if (!name) { alert("Vul eerst een afzendernaam in, bijv. Zalando."); return; }
+    const connected = state.accounts.filter(a => a.token);
+    if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
+
+    statusEl.classList.remove("hidden");
+    let total = 0;
+    const perAccount = [];
+
+    for (const account of connected) {
+      statusEl.textContent = `Zoeken bij ${account.email}...`;
+      try {
+        const ids = await fetchMessageIdsByFromName(account, name);
+        if (ids.length > 0) await bulkModifyMessages(account, ids, action);
+        total += ids.length;
+        perAccount.push(`${account.email}: ${ids.length}`);
+      } catch (e) {
+        console.error("Verwijderen op naam mislukt voor", account.email, e);
+        perAccount.push(`${account.email}: mislukt`);
+      }
+    }
+
+    const actionLabel = action === "archive" ? "gearchiveerd" : "naar de prullenbak verplaatst";
+    statusEl.textContent = `Klaar — ${total} berichten van "${name}" ${actionLabel}.\n` + perAccount.join(" · ");
+
+    if (state.activeFolder === "INBOX") refreshInbox();
+  }
+}
+
+async function fetchMessageIdsByFromName(account, name) {
+  const ids = [];
+  let pageToken = null;
+  let pages = 0;
+  const q = `from:(${name})`;
+  do {
+    const params = new URLSearchParams({ q, maxResults: "500" });
+    if (pageToken) params.set("pageToken", pageToken);
+    const r = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    if (!r.ok) break;
+    const data = await r.json();
+    (data.messages || []).forEach(m => ids.push(m.id));
+    pageToken = data.nextPageToken || null;
+    pages += 1;
+  } while (pageToken && pages < 10); // veiligheidsgrens: max 5000 berichten per account
+
+  return ids;
 }
 
 function wireWebshopSettings() {
