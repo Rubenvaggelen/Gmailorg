@@ -82,6 +82,20 @@
       <ul id="accounts-list" class="accounts-list"></ul>
     </section>
 
+    <section id="view-calendar" class="view hidden">
+      <div class="filter-row" id="calendar-account-chips"></div>
+      <div class="filter-row" id="calendar-range-chips"></div>
+      <div class="section-head">
+        <h2>Kalender</h2>
+        <button id="add-event-btn" class="btn-primary small">+ Afspraak</button>
+      </div>
+      <div id="calendar-empty" class="empty-state hidden">
+        <p class="empty-title">Geen afspraken</p>
+        <p class="empty-copy">Niets gepland in deze periode, of verbind eerst een account.</p>
+      </div>
+      <ul id="event-list" class="event-list"></ul>
+    </section>
+
     <section id="view-settings" class="view hidden">
       <div class="section-head">
         <h2>Instellingen</h2>
@@ -166,6 +180,10 @@
     <button class="tab" data-view="accounts">
       <span class="tab-dot"></span>
       Accounts
+    </button>
+    <button class="tab" data-view="calendar">
+      <span class="tab-dot"></span>
+      Kalender
     </button>
     <button class="tab" data-view="settings">
       <span class="tab-dot"></span>
@@ -259,6 +277,49 @@
     <div class="modal-actions">
       <button id="compose-cancel" class="btn-ghost">Annuleren</button>
       <button id="compose-send" class="btn-primary">Verstuur</button>
+    </div>
+  </div>
+</div>
+
+<div id="event-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2 id="event-modal-title">Nieuwe afspraak</h2>
+    <label class="field">
+      <span>Agenda van</span>
+      <select id="event-account"></select>
+    </label>
+    <label class="field">
+      <span>Titel</span>
+      <input id="event-title" type="text" placeholder="Bijv. Overleg met Ruben" />
+    </label>
+    <label class="toggle-row">
+      <span>Hele dag</span>
+      <input id="event-allday" type="checkbox" />
+    </label>
+    <label class="field">
+      <span>Begint</span>
+      <input id="event-start" type="datetime-local" />
+    </label>
+    <label class="field">
+      <span>Eindigt</span>
+      <input id="event-end" type="datetime-local" />
+    </label>
+    <label class="field">
+      <span>Locatie (optioneel)</span>
+      <input id="event-location" type="text" placeholder="Bijv. Kantoor / Zoom-link" />
+    </label>
+    <label class="field">
+      <span>Beschrijving (optioneel)</span>
+      <textarea id="event-description" rows="3" placeholder="Details&hellip;"></textarea>
+    </label>
+    <label class="field">
+      <span>Gasten uitnodigen (optioneel, komma-gescheiden e-mails)</span>
+      <input id="event-guests" type="text" placeholder="naam@voorbeeld.com, naam2@voorbeeld.com" />
+    </label>
+    <div class="modal-actions">
+      <button id="event-delete" class="btn-ghost danger hidden">Verwijderen</button>
+      <button id="event-cancel" class="btn-ghost">Annuleren</button>
+      <button id="event-save" class="btn-primary">Opslaan</button>
     </div>
   </div>
 </div>

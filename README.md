@@ -46,6 +46,19 @@ Tik op **+ Account** en log in met elk Gmail-adres. Zorg dat elk adres al
 als testgebruiker in het OAuth-consentscherm staat (dat hadden we al
 gezet) — anders weigert Google de login met een waarschuwing.
 
+## Nieuw: Kalender-tab
+
+- **Kalender-tab** naast Postbus: agenda-items van al je verbonden
+  accounts samengevoegd, gefilterd op account en periode (vandaag/week/maand).
+- **Afspraken aanmaken, bewerken en verwijderen** — inclusief locatie,
+  beschrijving, hele-dag-optie en gasten uitnodigen.
+
+⚠️ **Belangrijk:** dit vereist een extra scope. Voeg in het OAuth-
+consentscherm (tabblad Scopes) ook `.../auth/calendar` toe, net zoals je
+eerder de Gmail-scopes hebt toegevoegd. Verbind daarna al je accounts
+opnieuw in de Accounts-tab (verwijderen + opnieuw toevoegen) zodat de
+nieuwe toestemming wordt gevraagd.
+
 ## Mappen en opstellen
 
 - **Map-kiezer** bovenin de Postbus-tab: Postvak IN / Verzonden /

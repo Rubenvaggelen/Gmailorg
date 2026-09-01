@@ -8,6 +8,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/userinfo.email"
 ].join(" ");
 
@@ -40,6 +41,10 @@ const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", 
 const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
 
 state.activeFolder = "INBOX";
+state.events = [];
+state.activeCalendarAccountFilter = null;
+state.activeRange = "week"; // today | week | month
+const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 
 function persistAccounts() {
   localStorage.setItem("postbus:accounts", JSON.stringify(
@@ -83,18 +88,22 @@ function boot() {
   renderChips();
   renderCategoryChips();
   renderFolderChips();
+  renderCalendarAccountChips();
+  renderRangeChips();
   renderRules();
   updateSubline();
   wireNav();
   wireRuleModal();
   wireDetailModal();
   wireComposeModal();
+  wireEventModal();
   wireSettings();
   wireSearch();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
   document.getElementById("compose-btn").addEventListener("click", openCompose);
+  document.getElementById("add-event-btn").addEventListener("click", () => openEventModal("create"));
 
   startPolling();
 }
@@ -145,16 +154,120 @@ function addOrUpdateAccount(email, token, expiresIn) {
   renderChips();
   updateSubline();
   refreshInbox();
+  renderCalendarAccountChips();
+  refreshCalendar();
 }
 
 function removeAccount(email) {
   state.accounts = state.accounts.filter(a => a.email !== email);
   state.messages = state.messages.filter(m => m.accountEmail !== email);
+  state.events = state.events.filter(e => e.accountEmail !== email);
   persistAccounts();
   renderAccounts();
   renderChips();
   renderMessages();
+  renderCalendarAccountChips();
+  renderEvents();
   updateSubline();
+}
+
+/* ---------------- Google Calendar: fetch + merge ---------------- */
+
+function rangeBounds(range) {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  if (range === "today") end.setDate(end.getDate() + 1);
+  else if (range === "week") end.setDate(end.getDate() + 7);
+  else if (range === "month") end.setMonth(end.getMonth() + 1);
+  return { timeMin: start.toISOString(), timeMax: end.toISOString() };
+}
+
+async function refreshCalendar() {
+  const connected = state.accounts.filter(a => a.token);
+  if (connected.length === 0) { state.events = []; renderEvents(); return; }
+
+  const { timeMin, timeMax } = rangeBounds(state.activeRange);
+  const results = await Promise.all(connected.map(a => fetchAccountEvents(a, timeMin, timeMax)));
+  state.events = results.flat().sort((a, b) => a.start - b.start);
+  renderEvents();
+}
+
+async function fetchAccountEvents(account, timeMin, timeMax) {
+  try {
+    const params = new URLSearchParams({
+      timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50"
+    });
+    const r = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.items || []).map(ev => ({
+      id: ev.id,
+      accountEmail: account.email,
+      accountColor: account.color,
+      title: ev.summary || "(geen titel)",
+      location: ev.location || "",
+      description: ev.description || "",
+      start: new Date(ev.start?.dateTime || ev.start?.date).getTime(),
+      end: new Date(ev.end?.dateTime || ev.end?.date).getTime(),
+      allDay: !ev.start?.dateTime,
+      attendees: (ev.attendees || []).map(a => a.email)
+    }));
+  } catch (e) {
+    console.error("Kalender ophalen mislukt voor", account.email, e);
+    return [];
+  }
+}
+
+async function createEvent(accountEmail, data) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  const body = buildEventBody(data);
+  await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  refreshCalendar();
+}
+
+async function updateEvent(accountEmail, eventId, data) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  const body = buildEventBody(data);
+  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  refreshCalendar();
+}
+
+async function deleteEvent(accountEmail, eventId) {
+  const account = state.accounts.find(a => a.email === accountEmail);
+  if (!account || !account.token) return;
+  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${account.token}` }
+  });
+  refreshCalendar();
+}
+
+function buildEventBody({ title, start, end, allDay, location, description, guests }) {
+  const body = { summary: title, location, description };
+  if (allDay) {
+    body.start = { date: start };
+    body.end = { date: end };
+  } else {
+    body.start = { dateTime: new Date(start).toISOString() };
+    body.end = { dateTime: new Date(end).toISOString() };
+  }
+  if (guests && guests.length) body.attendees = guests.map(email => ({ email }));
+  return body;
 }
 
 /* ---------------- Gmail fetch + merge ---------------- */
@@ -518,6 +631,159 @@ function renderFolderChips() {
   });
 }
 
+function renderCalendarAccountChips() {
+  const wrap = document.getElementById("calendar-account-chips");
+  wrap.innerHTML = "";
+  const allChip = document.createElement("button");
+  allChip.className = "chip" + (state.activeCalendarAccountFilter === null ? " active" : "");
+  allChip.textContent = "Alle agenda's";
+  allChip.addEventListener("click", () => { state.activeCalendarAccountFilter = null; renderCalendarAccountChips(); renderEvents(); });
+  wrap.appendChild(allChip);
+
+  state.accounts.forEach(a => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (state.activeCalendarAccountFilter === a.email ? " active" : "");
+    chip.innerHTML = `<span class="chip-dot" style="background:${a.color}"></span>${a.email.split("@")[0]}`;
+    chip.addEventListener("click", () => { state.activeCalendarAccountFilter = a.email; renderCalendarAccountChips(); renderEvents(); });
+    wrap.appendChild(chip);
+  });
+}
+
+function renderRangeChips() {
+  const wrap = document.getElementById("calendar-range-chips");
+  wrap.innerHTML = "";
+  Object.entries(RANGE_LABELS).forEach(([key, label]) => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (state.activeRange === key ? " active" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => { state.activeRange = key; renderRangeChips(); refreshCalendar(); });
+    wrap.appendChild(chip);
+  });
+}
+
+function renderEvents() {
+  const list = document.getElementById("event-list");
+  const empty = document.getElementById("calendar-empty");
+  const filtered = state.events.filter(e =>
+    !state.activeCalendarAccountFilter || e.accountEmail === state.activeCalendarAccountFilter
+  );
+  list.innerHTML = "";
+  empty.classList.toggle("hidden", filtered.length > 0);
+
+  let lastDay = "";
+  filtered.forEach(ev => {
+    const dayKey = new Date(ev.start).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" });
+    if (dayKey !== lastDay) {
+      const heading = document.createElement("li");
+      heading.className = "event-day-heading";
+      heading.textContent = dayKey;
+      heading.style.listStyle = "none";
+      list.appendChild(heading);
+      lastDay = dayKey;
+    }
+    const li = document.createElement("li");
+    li.className = "event-row";
+    li.style.borderLeftColor = ev.accountColor;
+    const timeLabel = ev.allDay
+      ? "Hele dag"
+      : `${new Date(ev.start).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })} – ${new Date(ev.end).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}`;
+    li.innerHTML = `
+      <div class="event-time">${timeLabel}</div>
+      <div class="event-title">${escapeHtml(ev.title)}</div>
+      <div class="event-meta">${escapeHtml(ev.location || ev.accountEmail)}</div>
+    `;
+    li.addEventListener("click", () => openEventModal("edit", ev));
+    list.appendChild(li);
+  });
+}
+
+/* ---------------- Event modal (aanmaken / bewerken) ---------------- */
+
+let activeEditEvent = null;
+
+function toLocalInputValue(timestamp) {
+  const d = new Date(timestamp);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function openEventModal(mode, ev) {
+  const connected = state.accounts.filter(a => a.token);
+  if (connected.length === 0) { alert("Verbind eerst een account voordat je een afspraak kunt maken."); return; }
+
+  activeEditEvent = mode === "edit" ? ev : null;
+  document.getElementById("event-modal-title").textContent = mode === "edit" ? "Afspraak bewerken" : "Nieuwe afspraak";
+  document.getElementById("event-delete").classList.toggle("hidden", mode !== "edit");
+
+  const accountSelect = document.getElementById("event-account");
+  accountSelect.innerHTML = connected.map(a => `<option value="${a.email}">${a.email}</option>`).join("");
+
+  if (mode === "edit") {
+    accountSelect.value = ev.accountEmail;
+    document.getElementById("event-title").value = ev.title;
+    document.getElementById("event-allday").checked = ev.allDay;
+    document.getElementById("event-start").value = toLocalInputValue(ev.start);
+    document.getElementById("event-end").value = toLocalInputValue(ev.end);
+    document.getElementById("event-location").value = ev.location;
+    document.getElementById("event-description").value = ev.description;
+    document.getElementById("event-guests").value = (ev.attendees || []).join(", ");
+  } else {
+    const now = new Date();
+    now.setMinutes(0, 0, 0);
+    now.setHours(now.getHours() + 1);
+    const later = new Date(now.getTime() + 60 * 60 * 1000);
+    document.getElementById("event-title").value = "";
+    document.getElementById("event-allday").checked = false;
+    document.getElementById("event-start").value = toLocalInputValue(now.getTime());
+    document.getElementById("event-end").value = toLocalInputValue(later.getTime());
+    document.getElementById("event-location").value = "";
+    document.getElementById("event-description").value = "";
+    document.getElementById("event-guests").value = "";
+  }
+
+  document.getElementById("event-modal").classList.remove("hidden");
+}
+
+function wireEventModal() {
+  const modal = document.getElementById("event-modal");
+  document.getElementById("event-cancel").addEventListener("click", () => modal.classList.add("hidden"));
+
+  document.getElementById("event-save").addEventListener("click", () => {
+    const accountEmail = document.getElementById("event-account").value;
+    const title = document.getElementById("event-title").value.trim();
+    const allDay = document.getElementById("event-allday").checked;
+    const startVal = document.getElementById("event-start").value;
+    const endVal = document.getElementById("event-end").value;
+    const location = document.getElementById("event-location").value.trim();
+    const description = document.getElementById("event-description").value.trim();
+    const guests = document.getElementById("event-guests").value.split(",").map(s => s.trim()).filter(Boolean);
+
+    if (!title || !startVal || !endVal) { alert("Vul minstens een titel, begin- en eindtijd in."); return; }
+
+    const data = {
+      title,
+      allDay,
+      start: allDay ? startVal.slice(0, 10) : startVal,
+      end: allDay ? endVal.slice(0, 10) : endVal,
+      location, description, guests
+    };
+
+    if (activeEditEvent) {
+      updateEvent(accountEmail, activeEditEvent.id, data);
+    } else {
+      createEvent(accountEmail, data);
+    }
+    modal.classList.add("hidden");
+  });
+
+  document.getElementById("event-delete").addEventListener("click", () => {
+    if (!activeEditEvent) return;
+    if (!confirm("Deze afspraak verwijderen?")) return;
+    deleteEvent(activeEditEvent.accountEmail, activeEditEvent.id);
+    modal.classList.add("hidden");
+  });
+}
+
 function renderChips() {
   const wrap = document.getElementById("account-chips");
   wrap.innerHTML = "";
@@ -870,7 +1136,7 @@ function startPolling() {
   const minutes = state.settings.pollIntervalMinutes;
   if (!minutes) return; // 0 = handmatig
   state.pollHandle = setInterval(() => {
-    if (state.accounts.some(a => a.token)) refreshInbox();
+    if (state.accounts.some(a => a.token)) { refreshInbox(); refreshCalendar(); }
   }, minutes * 60 * 1000);
 }
 

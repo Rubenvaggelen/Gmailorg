@@ -757,3 +757,51 @@ main {
 .field select {
   cursor: pointer;
 }
+
+/* ---------- Calendar ---------- */
+
+.event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.event-row {
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  padding: 13px 14px;
+  border-left: 3px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.event-time {
+  font-size: 12.5px;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.event-title {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.event-meta {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.event-day-heading {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin: 16px 0 4px;
+  text-transform: capitalize;
+}
+
+.event-day-heading:first-child { margin-top: 0; }
