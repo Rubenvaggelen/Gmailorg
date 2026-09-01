@@ -161,6 +161,12 @@
       </div>
 
       <div class="settings-group">
+        <h3>Opruimen</h3>
+        <p class="settings-hint">Ruimt in één keer alle mail op die Gmail zelf al als "Promoties" herkent, over al je verbonden accounts heen.</p>
+        <button id="cleanup-promotions-btn" class="btn-primary small">Promotiemail opruimen</button>
+      </div>
+
+      <div class="settings-group">
         <h3>Gegevens</h3>
         <button id="reset-app-btn" class="btn-ghost danger">Alles wissen en opnieuw beginnen</button>
       </div>
@@ -320,6 +326,30 @@
       <button id="event-delete" class="btn-ghost danger hidden">Verwijderen</button>
       <button id="event-cancel" class="btn-ghost">Annuleren</button>
       <button id="event-save" class="btn-primary">Opslaan</button>
+    </div>
+  </div>
+</div>
+
+<div id="cleanup-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Promotiemail opruimen</h2>
+    <p id="cleanup-copy" class="settings-hint">
+      Dit doorzoekt al je verbonden accounts op mail die Gmail zelf als
+      "Promoties" categoriseert, en voert daar de gekozen actie op uit.
+      Dit kan een paar seconden tot een minuut duren.
+    </p>
+    <div id="cleanup-choice">
+      <button id="cleanup-archive-btn" class="btn-primary" style="margin-bottom:10px;">Archiveren</button>
+      <button id="cleanup-trash-btn" class="btn-ghost danger" style="margin-bottom:10px;">Verwijderen (naar prullenbak)</button>
+    </div>
+    <div id="cleanup-progress" class="hidden">
+      <p id="cleanup-status" class="settings-hint">Bezig...</p>
+    </div>
+    <div id="cleanup-result" class="hidden">
+      <p id="cleanup-result-text" class="settings-hint"></p>
+    </div>
+    <div class="modal-actions">
+      <button id="cleanup-close" class="btn-ghost">Sluiten</button>
     </div>
   </div>
 </div>
