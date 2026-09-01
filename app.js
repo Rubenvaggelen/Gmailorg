@@ -28,7 +28,7 @@ const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" 
 const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
 
 const state = {
-  clientId: localStorage.getItem("postbus:clientId") || "",
+  clientId: localStorage.getItem("postbus:clientId") || "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
