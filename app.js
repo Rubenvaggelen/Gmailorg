@@ -1145,7 +1145,11 @@ async function fetchNearbyRestaurants(lat, lon) {
         cuisine: tags.cuisine ? tags.cuisine.replace(/_/g, " ") : "",
         openingHours: tags.opening_hours || "",
         address: [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" "),
-        website: normalizeWebsiteUrl(tags.website || tags["contact:website"] || ""),
+        website: normalizeWebsiteUrl(
+          tags.website || tags["contact:website"] || tags["website:menu"] || tags.url || ""
+        ),
+        lat: elLat,
+        lon: elLon,
         distance: haversineDistanceMeters(lat, lon, elLat, elLon)
       };
     })
@@ -1174,6 +1178,7 @@ function renderRestaurants(restaurants, userLat, userLon) {
   restaurants.slice(0, 40).forEach(r => {
     const li = document.createElement("li");
     li.className = "restaurant-row";
+    li.style.cursor = "pointer";
     const distanceLabel = r.distance < 1000
       ? `${Math.round(r.distance)} m`
       : `${(r.distance / 1000).toFixed(1)} km`;
@@ -1184,9 +1189,16 @@ function renderRestaurants(restaurants, userLat, userLon) {
       </div>
       ${r.cuisine ? `<div class="restaurant-cuisine">${escapeHtml(r.cuisine)}</div>` : ""}
       <div class="restaurant-hours">${r.openingHours ? escapeHtml(r.openingHours) : "Openingstijden onbekend"}</div>
+      <div class="restaurant-meta">Tik voor route</div>
       ${r.address ? `<div class="restaurant-address">${escapeHtml(r.address)}</div>` : ""}
       ${r.website ? `<a class="restaurant-website" href="${escapeHtml(r.website)}" target="_blank" rel="noopener">Website openen</a>` : ""}
     `;
+    li.addEventListener("click", () => {
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}`;
+      window.open(url, "_blank");
+    });
+    const websiteLink = li.querySelector(".restaurant-website");
+    if (websiteLink) websiteLink.addEventListener("click", (e) => e.stopPropagation());
     listEl.appendChild(li);
   });
 }
