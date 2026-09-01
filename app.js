@@ -1068,8 +1068,12 @@ function wireRestaurants() {
   document.getElementById("find-restaurants-btn").addEventListener("click", findNearbyRestaurants);
 }
 
-function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
+function normalizeWebsiteUrl(url) {
+  if (!url) return "";
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {  const R = 6371000;
   const toRad = (d) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
@@ -1141,6 +1145,7 @@ async function fetchNearbyRestaurants(lat, lon) {
         cuisine: tags.cuisine ? tags.cuisine.replace(/_/g, " ") : "",
         openingHours: tags.opening_hours || "",
         address: [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" "),
+        website: normalizeWebsiteUrl(tags.website || tags["contact:website"] || ""),
         distance: haversineDistanceMeters(lat, lon, elLat, elLon)
       };
     })
@@ -1180,6 +1185,7 @@ function renderRestaurants(restaurants, userLat, userLon) {
       ${r.cuisine ? `<div class="restaurant-cuisine">${escapeHtml(r.cuisine)}</div>` : ""}
       <div class="restaurant-hours">${r.openingHours ? escapeHtml(r.openingHours) : "Openingstijden onbekend"}</div>
       ${r.address ? `<div class="restaurant-address">${escapeHtml(r.address)}</div>` : ""}
+      ${r.website ? `<a class="restaurant-website" href="${escapeHtml(r.website)}" target="_blank" rel="noopener">Website openen</a>` : ""}
     `;
     listEl.appendChild(li);
   });
