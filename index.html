@@ -206,17 +206,23 @@
       <div class="settings-group">
         <h3>Verwijderen op naam</h3>
         <p class="settings-hint">
-          Typ een afzendernaam (bijv. "Zalando") om in één keer alle mail
-          van die afzender te archiveren of verwijderen — overal (Postvak
-          IN, archief, Verzonden, Concepten, zelfs Prullenbak), over al je
-          verbonden accounts heen.
+          Typ een afzendernaam (bijv. "Zalando") om te zien hoeveel mail
+          er van die afzender is — overal (Postvak IN, archief, Verzonden,
+          Concepten, zelfs Prullenbak), over al je verbonden accounts
+          heen — en kies daarna pas archiveren of verwijderen.
         </p>
         <label class="field">
           <span>Afzendernaam</span>
           <input id="bulk-name-input" type="text" placeholder="bijv. Zalando" />
         </label>
-        <button id="bulk-name-archive-btn" class="btn-primary small" style="margin-bottom:8px;">Archiveren</button>
-        <button id="bulk-name-trash-btn" class="btn-ghost danger">Verwijderen</button>
+        <button id="bulk-name-search-btn" class="btn-primary small">Zoeken</button>
+
+        <div id="bulk-name-result" class="hidden" style="margin-top:12px;">
+          <p id="bulk-name-count" class="settings-hint"></p>
+          <button id="bulk-name-archive-btn" class="btn-primary small" style="margin-bottom:8px;">Archiveren</button>
+          <button id="bulk-name-trash-btn" class="btn-ghost danger">Verwijderen</button>
+        </div>
+
         <p id="bulk-name-status" class="settings-hint hidden" style="margin-top:10px;"></p>
       </div>
 
