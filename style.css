@@ -698,3 +698,25 @@ main {
 #cleanup-result-text {
   white-space: pre-line;
 }
+
+/* ---------- Account reconnect ---------- */
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.account-reconnect {
+  background: var(--amber);
+  border: none;
+  color: #201505;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
