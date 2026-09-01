@@ -936,6 +936,9 @@ function renderAccounts() {
     const li = document.createElement("li");
     li.className = "account-row";
     const initials = a.email.slice(0, 2).toUpperCase();
+    const reconnectBtn = a.token
+      ? ""
+      : `<button class="account-reconnect" data-email="${a.email}">Opnieuw verbinden</button>`;
     li.innerHTML = `
       <div class="account-info">
         <div class="account-avatar" style="background:${a.color}">${initials}</div>
@@ -944,13 +947,36 @@ function renderAccounts() {
           <div class="account-status">${a.token ? "Verbonden" : "Opnieuw verbinden nodig"}</div>
         </div>
       </div>
-      <button class="account-delete" data-email="${a.email}">Verwijderen</button>
+      <div class="account-actions">
+        ${reconnectBtn}
+        <button class="account-delete" data-email="${a.email}">Verwijderen</button>
+      </div>
     `;
     list.appendChild(li);
   });
   list.querySelectorAll(".account-delete").forEach(btn => {
     btn.addEventListener("click", () => removeAccount(btn.dataset.email));
   });
+  list.querySelectorAll(".account-reconnect").forEach(btn => {
+    btn.addEventListener("click", () => reconnectAccount(btn.dataset.email));
+  });
+}
+
+function reconnectAccount(email) {
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    alert("Google-inlogscript is nog niet geladen. Probeer het over een paar seconden opnieuw.");
+    return;
+  }
+  const tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: state.clientId,
+    scope: SCOPES,
+    hint: email,
+    callback: async (resp) => {
+      if (resp.error) { alert("Opnieuw verbinden mislukt: " + resp.error); return; }
+      addOrUpdateAccount(email, resp.access_token, resp.expires_in);
+    }
+  });
+  tokenClient.requestAccessToken();
 }
 
 function renderRules() {
