@@ -1,4 +1,4 @@
-const CACHE = "gmailorg-shell-v16";
+const CACHE = "gmailorg-shell-v17";
 const SHELL = ["./index.html", "./style.css", "./app.js", "./manifest.json", "./logo-mark.png"];
 
 self.addEventListener("install", (event) => {
