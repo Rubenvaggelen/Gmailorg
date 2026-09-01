@@ -203,14 +203,20 @@
         <p class="settings-hint">
           Herkent bekende webshops (grote NL/BE en internationale ketens) plus
           bestel-/verzendmail van andere shops, en verplaatst die naar een
-          eigen map "Webshops" in Gmail — zodat je Postvak IN opgeruimd
-          blijft.
+          eigen map "Webshops" — zodat je Postvak IN opgeruimd blijft.
         </p>
         <label class="toggle-row">
           <span>Nieuwe webshopmail automatisch verplaatsen</span>
           <input id="setting-auto-webshop" type="checkbox" />
         </label>
-        <button id="backfill-webshop-btn" class="btn-primary small">Bestaande webshopmail ook verplaatsen</button>
+        <button id="backfill-webshop-search-btn" class="btn-primary small">Bestaande webshopmail zoeken</button>
+
+        <div id="backfill-webshop-result" class="hidden" style="margin-top:12px;">
+          <p id="backfill-webshop-count" class="settings-hint"></p>
+          <button id="backfill-webshop-move-btn" class="btn-primary small" style="margin-bottom:8px;">Verplaatsen naar map Webshops</button>
+          <button id="backfill-webshop-trash-btn" class="btn-ghost danger">Verwijderen</button>
+        </div>
+
         <p id="backfill-webshop-status" class="settings-hint hidden" style="margin-top:10px;"></p>
       </div>
 
@@ -412,11 +418,15 @@
   <div class="modal-card">
     <h2>Promotiemail opruimen</h2>
     <p id="cleanup-copy" class="settings-hint">
-      Dit doorzoekt al je verbonden accounts op mail die Gmail zelf als
-      "Promoties" categoriseert, en voert daar de gekozen actie op uit.
-      Dit kan een paar seconden tot een minuut duren.
+      Dit doorzoekt al je verbonden accounts op reclame-/bulkmail (bij Gmail
+      via de eigen "Promoties"-categorie, bij Hotmail via hetzelfde kenmerk
+      als nieuwsbrieven). Dit kan een paar seconden tot een minuut duren.
     </p>
-    <div id="cleanup-choice">
+    <div id="cleanup-search-row">
+      <button id="cleanup-search-btn" class="btn-primary small">Zoeken</button>
+    </div>
+    <div id="cleanup-choice" class="hidden" style="margin-top:12px;">
+      <p id="cleanup-count" class="settings-hint"></p>
       <button id="cleanup-archive-btn" class="btn-primary" style="margin-bottom:10px;">Archiveren</button>
       <button id="cleanup-trash-btn" class="btn-ghost danger" style="margin-bottom:10px;">Verwijderen (naar prullenbak)</button>
     </div>
