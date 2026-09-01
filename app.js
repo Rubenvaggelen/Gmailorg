@@ -18,14 +18,56 @@ const DEFAULT_SETTINGS = {
   categorize: true,
   swipeRight: "archive",
   swipeLeft: "trash",
-  notifications: false
+  notifications: false,
+  autoWebshop: true
 };
 
 const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"];
-const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen" };
+const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen", webshop: "Webshops" };
 const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
 const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
+const WEBSHOP_LABEL_NAME = "Webshops";
+
+// Brede, maar per definitie onvolledige lijst van bekende webshop-domeinen
+// (vooral NL/BE + grote internationale spelers). Wordt aangevuld met
+// patroonherkenning hieronder voor shops die er niet bij staan.
+const WEBSHOP_DOMAINS = [
+  "bol.com", "coolblue.nl", "coolblue.be", "wehkamp.nl", "zalando.nl", "zalando.be", "zalando.com",
+  "amazon.nl", "amazon.de", "amazon.com", "amazon.co.uk", "aliexpress.com", "ikea.com",
+  "mediamarkt.nl", "mediamarkt.be", "hema.nl", "hema.be", "decathlon.nl", "decathlon.be",
+  "action.com", "etsy.com", "ebay.com", "ebay.nl", "asos.com", "zara.com", "hm.com",
+  "nike.com", "adidas.com", "adidas.nl", "vinted.com", "vinted.nl", "marktplaats.nl",
+  "temu.com", "shein.com", "wish.com", "kruidvat.nl", "gamma.nl", "gamma.be", "praxis.nl",
+  "blokker.nl", "jumbo.com", "ah.nl", "bcc.nl", "expert.nl", "otto.de", "conrad.nl",
+  "bever.nl", "intersport.nl", "jdsports.nl", "footlocker.nl", "vanharen.nl", "bristol.eu",
+  "only.com", "veepee.nl", "showroomprive.nl", "cdiscount.com", "fnac.com", "booking.com",
+  "shopify.com", "xenos.nl", "trendhim.nl", "douglas.nl", "rituals.com", "sportdirect.com",
+  "bijenkorf.nl", "debijenkorf.nl", "perrysport.nl", "scapino.nl", "wibra.nl", "zeeman.com",
+  "c-a.com", "primark.com", "uniqlo.com", "boohoo.com", "prenatal.nl", "babypark.nl",
+  "kiabi.nl", "costway.nl", "vidaxl.nl", "beslist.nl", "coolshop.nl", "alternate.nl",
+  "azerty.nl", "centralpoint.nl"
+];
+
+function webshopDomainFromEmail(from) {
+  const match = from.match(/@([\w.-]+)/);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function isKnownWebshopDomain(from) {
+  const domain = webshopDomainFromEmail(from);
+  return WEBSHOP_DOMAINS.some(d => domain === d || domain.endsWith("." + d));
+}
+
+function looksLikeWebshopMail(message) {
+  if (isKnownWebshopDomain(message.from)) return true;
+  // Voor shops die niet in de lijst staan: bestel-/verzendtaal in het
+  // onderwerp, gecombineerd met een uitschrijflink (commerciële afzender).
+  const text = message.subject.toLowerCase();
+  const pattern = /\b(bestelling|bestelbevestiging|orderbevestiging|verzonden|track.?trace|pakket|factuur|levering|retourneren|winkelwagen|aanbieding|korting(?:scode)?)\b/;
+  return message.hasListUnsubscribe && pattern.test(text);
+}
+
 
 const state = {
   clientId: "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
@@ -43,6 +85,7 @@ const state = {
   activeFolder: "INBOX",
   searchQuery: "",
   activeView: "inbox",
+  webshopLabelIds: {}, // { accountEmail: gmailLabelId } — cache zodat we niet elke keer opnieuw hoeven te zoeken/aan te maken
   pollHandle: null
 };
 
@@ -242,6 +285,11 @@ async function refreshInbox() {
   state.messages = merged.sort((a, b) => b.timestamp - a.timestamp);
   await applyRulesToNewMessages(state.messages);
   cleanupExpiredSnoozes();
+
+  if (state.settings.autoWebshop && state.activeFolder === "INBOX") {
+    await autoMoveWebshopMail(connected, merged);
+  }
+
   renderMessages();
 
   merged.forEach(m => state.seenIds.add(m.id));
@@ -282,7 +330,8 @@ async function fetchAccountMessages(account) {
         snippet: d.snippet || "",
         timestamp: parseInt(d.internalDate || "0", 10),
         messageIdHeader: get("Message-ID"),
-        hasListUnsubscribe: Boolean(get("List-Unsubscribe"))
+        hasListUnsubscribe: Boolean(get("List-Unsubscribe")),
+        labelIds: d.labelIds || []
       };
       message.category = classifyMessage(message);
       return message;
@@ -293,7 +342,120 @@ async function fetchAccountMessages(account) {
   }
 }
 
+/* ---------------- Webshopmail automatisch naar map verplaatsen ---------------- */
+
+async function getOrCreateWebshopLabelId(account) {
+  if (state.webshopLabelIds[account.email]) return state.webshopLabelIds[account.email];
+  try {
+    const listResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
+      headers: { Authorization: `Bearer ${account.token}` }
+    });
+    const listData = await listResp.json();
+    let label = (listData.labels || []).find(l => l.name === WEBSHOP_LABEL_NAME);
+
+    if (!label) {
+      const createResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: WEBSHOP_LABEL_NAME,
+          labelListVisibility: "labelShow",
+          messageListVisibility: "show"
+        })
+      });
+      if (!createResp.ok) return null;
+      label = await createResp.json();
+    }
+
+    state.webshopLabelIds[account.email] = label.id;
+    return label.id;
+  } catch (e) {
+    console.error("Kon Webshops-label niet ophalen/aanmaken voor", account.email, e);
+    return null;
+  }
+}
+
+async function autoMoveWebshopMail(connectedAccounts, messages) {
+  for (const account of connectedAccounts) {
+    const labelId = state.webshopLabelIds[account.email] || await getOrCreateWebshopLabelId(account);
+    if (!labelId) continue;
+
+    const toMove = messages.filter(m =>
+      m.accountEmail === account.email &&
+      m.category === "webshop" &&
+      !m.labelIds.includes(labelId)
+    );
+    if (toMove.length === 0) continue;
+
+    await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ids: toMove.map(m => m.id),
+        addLabelIds: [labelId],
+        removeLabelIds: ["INBOX"]
+      })
+    });
+
+    // Lokaal ook meteen uit Postvak IN halen, zodat het gelijk klopt in beeld.
+    const movedIds = new Set(toMove.map(m => m.id));
+    state.messages = state.messages.filter(m => !movedIds.has(m.id));
+  }
+}
+
+/* ---------------- Oude webshopmail met terugwerkende kracht verplaatsen ---------------- */
+
+async function backfillWebshopMail(onProgress) {
+  const connected = state.accounts.filter(a => a.token);
+  const results = [];
+
+  for (const account of connected) {
+    onProgress(`Bezig met ${account.email}...`);
+    const labelId = await getOrCreateWebshopLabelId(account);
+    if (!labelId) { results.push(`${account.email}: mislukt`); continue; }
+
+    // Bouw een zoekopdracht op basis van de bekende domeinenlijst, in kleine
+    // stukken zodat de query niet te lang wordt.
+    const chunkSize = 20;
+    const idSet = new Set();
+    for (let i = 0; i < WEBSHOP_DOMAINS.length; i += chunkSize) {
+      const chunk = WEBSHOP_DOMAINS.slice(i, i + chunkSize);
+      const q = "in:inbox (" + chunk.map(d => `from:${d}`).join(" OR ") + ")";
+      let pageToken = null;
+      let pages = 0;
+      do {
+        const params = new URLSearchParams({ q, maxResults: "500" });
+        if (pageToken) params.set("pageToken", pageToken);
+        const r = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${account.token}` } }
+        );
+        if (!r.ok) break;
+        const data = await r.json();
+        (data.messages || []).forEach(m => idSet.add(m.id));
+        pageToken = data.nextPageToken || null;
+        pages += 1;
+      } while (pageToken && pages < 5);
+    }
+
+    const ids = [...idSet];
+    for (let i = 0; i < ids.length; i += 1000) {
+      const idsChunk = ids.slice(i, i + 1000);
+      await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: idsChunk, addLabelIds: [labelId], removeLabelIds: ["INBOX"] })
+      });
+    }
+    results.push(`${account.email}: ${ids.length}`);
+  }
+
+  if (state.activeFolder === "INBOX") refreshInbox();
+  return results;
+}
+
 function classifyMessage(message) {
+  if (looksLikeWebshopMail(message)) return "webshop";
   if (message.hasListUnsubscribe) return "newsletter";
   const from = message.from.toLowerCase();
   if (/no-?reply|notification|alert|do-?not-?reply/.test(from)) return "notification";
@@ -1138,6 +1300,26 @@ function wireSettings() {
   });
 
   wireCleanupModal();
+  wireWebshopSettings();
+}
+
+function wireWebshopSettings() {
+  const autoWebshopToggle = document.getElementById("setting-auto-webshop");
+  autoWebshopToggle.checked = state.settings.autoWebshop;
+  autoWebshopToggle.addEventListener("change", () => {
+    state.settings.autoWebshop = autoWebshopToggle.checked;
+    persistSettings();
+  });
+
+  const statusEl = document.getElementById("backfill-webshop-status");
+  document.getElementById("backfill-webshop-btn").addEventListener("click", async () => {
+    const connected = state.accounts.filter(a => a.token);
+    if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Bezig...";
+    const results = await backfillWebshopMail((msg) => { statusEl.textContent = msg; });
+    statusEl.textContent = "Klaar — " + results.join(" · ");
+  });
 }
 
 /* ---------------- Promotiemail opruimen (eenmalige bulkactie) ---------------- */
