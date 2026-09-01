@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
 const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"];
 const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen", webshop: "Webshops" };
 const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
+const MS_FOLDER_MAP = { INBOX: "inbox", SENT: "sentitems", DRAFT: "drafts", TRASH: "deleteditems" };
+const MS_SCOPES = ["Mail.Read", "Mail.ReadWrite", "Mail.Send", "User.Read"];
 const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
 const WEBSHOP_LABEL_NAME = "Webshops";
@@ -71,6 +73,7 @@ function looksLikeWebshopMail(message) {
 
 const state = {
   clientId: "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
+  msClientId: localStorage.getItem("postbus:msClientId") || "",
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
@@ -92,7 +95,10 @@ const state = {
 
 function persistAccounts() {
   localStorage.setItem("postbus:accounts", JSON.stringify(
-    state.accounts.map(a => ({ email: a.email, color: a.color, token: a.token, tokenExpiry: a.tokenExpiry }))
+    state.accounts.map(a => ({
+      email: a.email, color: a.color, token: a.token, tokenExpiry: a.tokenExpiry,
+      provider: a.provider || "google"
+    }))
   ));
 }
 function persistRules() { localStorage.setItem("postbus:rules", JSON.stringify(state.rules)); }
@@ -138,7 +144,10 @@ function boot() {
 
   // Voor elk account: plan een stille ververs-poging vlak vóór het token
   // verloopt, of probeer er meteen één als het token al verlopen is.
+  // (Voor Microsoft-accounts gebeurt dit los, via de "Opnieuw verbinden"-knop —
+  // MSAL's eigen stille verversing vereist een net iets ander patroon.)
   state.accounts.forEach(a => {
+    if (a.provider === "microsoft") return;
     if (a.token) scheduleSilentRefresh(a);
     else silentRefreshAccount(a.email);
   });
@@ -164,6 +173,7 @@ function boot() {
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
+  document.getElementById("add-microsoft-btn").addEventListener("click", startAddMicrosoftAccount);
   document.getElementById("compose-btn").addEventListener("click", openCompose);
   document.getElementById("add-event-btn").addEventListener("click", () => openEventModal("create"));
 
@@ -202,26 +212,82 @@ async function fetchProfile(token) {
   return r.json();
 }
 
-function addOrUpdateAccount(email, token, expiresIn) {
+function addOrUpdateAccount(email, token, expiresIn, provider = "google") {
   const existing = state.accounts.find(a => a.email === email);
   const tokenExpiry = Date.now() + expiresIn * 1000;
   let account;
   if (existing) {
     existing.token = token;
     existing.tokenExpiry = tokenExpiry;
+    existing.provider = provider;
     account = existing;
   } else {
-    account = { email, color: COLORS[state.accounts.length % COLORS.length], token, tokenExpiry };
+    account = { email, color: COLORS[state.accounts.length % COLORS.length], token, tokenExpiry, provider };
     state.accounts.push(account);
   }
   persistAccounts();
-  scheduleSilentRefresh(account);
+  if (provider === "google") scheduleSilentRefresh(account);
   renderAccounts();
   renderChips();
   renderCalendarAccountChips();
   updateSubline();
   refreshInbox();
   refreshCalendar();
+}
+
+/* ---------------- Microsoft (Hotmail/Outlook) OAuth via MSAL ---------------- */
+
+let msalInstance = null;
+
+function getMsalInstance() {
+  if (msalInstance) return msalInstance;
+  if (!window.msal || !state.msClientId) return null;
+  msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: state.msClientId,
+      authority: "https://login.microsoftonline.com/common",
+      redirectUri: window.location.origin + window.location.pathname
+    }
+  });
+  return msalInstance;
+}
+
+async function startAddMicrosoftAccount() {
+  if (!state.msClientId) {
+    alert("Vul eerst je Microsoft Client ID in bij Instellingen voordat je een Hotmail-account kunt toevoegen.");
+    return;
+  }
+  const app = getMsalInstance();
+  if (!app) {
+    alert("Microsoft-inlogscript is nog niet geladen. Probeer het over een paar seconden opnieuw.");
+    return;
+  }
+  try {
+    const result = await app.loginPopup({ scopes: MS_SCOPES });
+    const expiresIn = Math.max(1, Math.round((result.expiresOn.getTime() - Date.now()) / 1000));
+    addOrUpdateAccount(result.account.username, result.accessToken, expiresIn, "microsoft");
+  } catch (e) {
+    alert("Inloggen bij Microsoft mislukt: " + (e.errorMessage || e.message || e));
+  }
+}
+
+async function reconnectMicrosoftAccount(email) {
+  const app = getMsalInstance();
+  if (!app) { alert("Microsoft-inlogscript is nog niet geladen."); return; }
+  try {
+    const accounts = app.getAllAccounts().filter(a => a.username === email);
+    let result;
+    if (accounts.length > 0) {
+      result = await app.acquireTokenSilent({ scopes: MS_SCOPES, account: accounts[0] })
+        .catch(() => app.acquireTokenPopup({ scopes: MS_SCOPES, account: accounts[0] }));
+    } else {
+      result = await app.loginPopup({ scopes: MS_SCOPES, loginHint: email });
+    }
+    const expiresIn = Math.max(1, Math.round((result.expiresOn.getTime() - Date.now()) / 1000));
+    addOrUpdateAccount(email, result.accessToken, expiresIn, "microsoft");
+  } catch (e) {
+    alert("Opnieuw verbinden mislukt: " + (e.errorMessage || e.message || e));
+  }
 }
 
 /* ---------------- Stil verversen op de achtergrond ---------------- */
@@ -300,6 +366,7 @@ async function refreshInbox() {
 }
 
 async function fetchAccountMessages(account) {
+  if (account.provider === "microsoft") return fetchMicrosoftMessages(account);
   try {
     const count = state.settings.fetchCount;
     const listResp = await fetch(
@@ -345,6 +412,43 @@ async function fetchAccountMessages(account) {
   }
 }
 
+async function fetchMicrosoftMessages(account) {
+  try {
+    const count = state.settings.fetchCount;
+    const folder = MS_FOLDER_MAP[state.activeFolder] || "inbox";
+    const select = "subject,from,receivedDateTime,bodyPreview,conversationId,internetMessageId";
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/mailFolders/${folder}/messages?$top=${count}&$select=${select}&$orderby=receivedDateTime desc`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+
+    return (data.value || []).map(d => {
+      const fromAddr = d.from?.emailAddress?.address || "";
+      const fromName = d.from?.emailAddress?.name || fromAddr;
+      const message = {
+        id: d.id,
+        threadId: d.conversationId,
+        accountEmail: account.email,
+        accountColor: account.color,
+        from: fromName && fromAddr ? `${fromName} <${fromAddr}>` : (fromAddr || "Onbekend"),
+        subject: d.subject || "(geen onderwerp)",
+        snippet: d.bodyPreview || "",
+        timestamp: new Date(d.receivedDateTime).getTime() || 0,
+        messageIdHeader: d.internetMessageId || "",
+        hasListUnsubscribe: false, // Graph API levert dit niet zonder extra aanroep
+        labelIds: []
+      };
+      message.category = classifyMessage(message);
+      return message;
+    });
+  } catch (e) {
+    console.error("Fetch (Microsoft) mislukt voor", account.email, e);
+    return [];
+  }
+}
+
 /* ---------------- Webshopmail automatisch naar map verplaatsen ---------------- */
 
 async function getOrCreateWebshopLabelId(account) {
@@ -380,6 +484,7 @@ async function getOrCreateWebshopLabelId(account) {
 
 async function autoMoveWebshopMail(connectedAccounts, messages) {
   for (const account of connectedAccounts) {
+    if (account.provider === "microsoft") continue; // labels-systeem verschilt bij Outlook, nog niet ondersteund
     const labelId = state.webshopLabelIds[account.email] || await getOrCreateWebshopLabelId(account);
     if (!labelId) continue;
 
@@ -409,7 +514,7 @@ async function autoMoveWebshopMail(connectedAccounts, messages) {
 /* ---------------- Oude webshopmail met terugwerkende kracht verplaatsen ---------------- */
 
 async function backfillWebshopMail(onProgress) {
-  const connected = state.accounts.filter(a => a.token);
+  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
   const results = [];
 
   for (const account of connected) {
@@ -519,7 +624,8 @@ async function modifyLabels(messageId, token, body) {
 async function archiveMessage(id) {
   const account = accountForMessage(id);
   if (!account || !account.token) return;
-  await modifyLabels(id, account.token, { removeLabelIds: ["INBOX"] });
+  if (account.provider === "microsoft") await moveMicrosoftMessage(account, id, "archive");
+  else await modifyLabels(id, account.token, { removeLabelIds: ["INBOX"] });
   state.messages = state.messages.filter(m => m.id !== id);
   renderMessages();
 }
@@ -527,10 +633,14 @@ async function archiveMessage(id) {
 async function trashMessage(id) {
   const account = accountForMessage(id);
   if (!account || !account.token) return;
-  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${account.token}` }
-  });
+  if (account.provider === "microsoft") {
+    await moveMicrosoftMessage(account, id, "deleteditems");
+  } else {
+    await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}` }
+    });
+  }
   state.messages = state.messages.filter(m => m.id !== id);
   renderMessages();
 }
@@ -538,11 +648,20 @@ async function trashMessage(id) {
 async function snoozeMessage(id, until) {
   const account = accountForMessage(id);
   if (!account || !account.token) return;
-  await modifyLabels(id, account.token, { removeLabelIds: ["INBOX"] });
+  if (account.provider === "microsoft") await moveMicrosoftMessage(account, id, "archive");
+  else await modifyLabels(id, account.token, { removeLabelIds: ["INBOX"] });
   state.snoozed[id] = until;
   persistSnoozed();
   state.messages = state.messages.filter(m => m.id !== id);
   renderMessages();
+}
+
+async function moveMicrosoftMessage(account, id, destinationId) {
+  await fetch(`https://graph.microsoft.com/v1.0/me/messages/${id}/move`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ destinationId })
+  });
 }
 
 function snoozeUntilTimestamp(kind) {
@@ -611,17 +730,39 @@ async function openDetail(message) {
     return;
   }
   try {
-    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
-      headers: { Authorization: `Bearer ${account.token}` }
-    });
-    const data = await r.json();
-    document.getElementById("detail-body").textContent = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
+    if (account.provider === "microsoft") {
+      const r = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}?$select=body`, {
+        headers: { Authorization: `Bearer ${account.token}` }
+      });
+      const data = await r.json();
+      const raw = data.body?.content || "";
+      const text = data.body?.contentType === "html" ? stripHtml(raw) : raw;
+      document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
+    } else {
+      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
+        headers: { Authorization: `Bearer ${account.token}` }
+      });
+      const data = await r.json();
+      document.getElementById("detail-body").textContent = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
+    }
   } catch (e) {
     document.getElementById("detail-body").textContent = message.snippet || "Kon bericht niet volledig laden.";
   }
 }
 
 async function sendReply(message, bodyText) {
+  const account = state.accounts.find(a => a.email === message.accountEmail);
+  if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
+
+  if (account.provider === "microsoft") {
+    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}/reply`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: bodyText })
+    });
+    return;
+  }
+
   const toAddress = extractEmailAddress(message.from);
   const subject = message.subject.toLowerCase().startsWith("re:") ? message.subject : `Re: ${message.subject}`;
   await sendMail(message.accountEmail, {
@@ -633,6 +774,22 @@ async function sendReply(message, bodyText) {
 async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, threadId }) {
   const account = state.accounts.find(a => a.email === fromAccountEmail);
   if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
+
+  if (account.provider === "microsoft") {
+    await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: {
+          subject,
+          body: { contentType: "Text", content: body },
+          toRecipients: [{ emailAddress: { address: to } }]
+        },
+        saveToSentItems: true
+      })
+    });
+    return;
+  }
 
   const lines = [
     `To: ${to}`,
@@ -715,7 +872,7 @@ function rangeBounds(range) {
 }
 
 async function refreshCalendar() {
-  const connected = state.accounts.filter(a => a.token);
+  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
   if (connected.length === 0) { state.events = []; renderEvents(); return; }
 
   const { timeMin, timeMax } = rangeBounds(state.activeRange);
@@ -941,15 +1098,16 @@ function renderAccounts() {
     const li = document.createElement("li");
     li.className = "account-row";
     const initials = a.email.slice(0, 2).toUpperCase();
+    const providerLabel = a.provider === "microsoft" ? "Hotmail/Outlook" : "Google";
     const reconnectBtn = a.token
       ? ""
-      : `<button class="account-reconnect" data-email="${a.email}">Opnieuw verbinden</button>`;
+      : `<button class="account-reconnect" data-email="${a.email}" data-provider="${a.provider || "google"}">Opnieuw verbinden</button>`;
     li.innerHTML = `
       <div class="account-info">
         <div class="account-avatar" style="background:${a.color}">${initials}</div>
         <div>
           <div class="account-email">${escapeHtml(a.email)}</div>
-          <div class="account-status">${a.token ? "Verbonden" : "Opnieuw verbinden nodig"}</div>
+          <div class="account-status">${providerLabel} · ${a.token ? "Verbonden" : "Opnieuw verbinden nodig"}</div>
         </div>
       </div>
       <div class="account-actions">
@@ -963,7 +1121,10 @@ function renderAccounts() {
     btn.addEventListener("click", () => removeAccount(btn.dataset.email));
   });
   list.querySelectorAll(".account-reconnect").forEach(btn => {
-    btn.addEventListener("click", () => reconnectAccount(btn.dataset.email));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.provider === "microsoft") reconnectMicrosoftAccount(btn.dataset.email);
+      else reconnectAccount(btn.dataset.email);
+    });
   });
 }
 
@@ -1025,7 +1186,7 @@ function renderCalendarAccountChips() {
   allChip.addEventListener("click", () => { state.activeCalendarAccountFilter = null; renderCalendarAccountChips(); renderEvents(); });
   wrap.appendChild(allChip);
 
-  state.accounts.forEach(a => {
+  state.accounts.filter(a => a.provider !== "microsoft").forEach(a => {
     const chip = document.createElement("button");
     chip.className = "chip" + (state.activeCalendarAccountFilter === a.email ? " active" : "");
     chip.innerHTML = `<span class="chip-dot" style="background:${a.color}"></span>${a.email.split("@")[0]}`;
@@ -1247,7 +1408,7 @@ function toLocalInputValue(timestamp) {
 }
 
 function openEventModal(mode, ev) {
-  const connected = state.accounts.filter(a => a.token);
+  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
   if (connected.length === 0) { alert("Verbind eerst een account voordat je een afspraak kunt maken."); return; }
 
   activeEditEvent = mode === "edit" ? ev : null;
@@ -1441,6 +1602,14 @@ function wireSettings() {
   const swipeRightSelect = document.getElementById("setting-swipe-right");
   const swipeLeftSelect = document.getElementById("setting-swipe-left");
   const notificationsToggle = document.getElementById("setting-notifications");
+  const msClientIdInput = document.getElementById("setting-ms-client-id");
+
+  msClientIdInput.value = state.msClientId;
+  msClientIdInput.addEventListener("change", () => {
+    state.msClientId = msClientIdInput.value.trim();
+    localStorage.setItem("postbus:msClientId", state.msClientId);
+    msalInstance = null; // opnieuw aanmaken met de nieuwe Client ID
+  });
 
   pollSelect.value = String(state.settings.pollIntervalMinutes);
   fetchSelect.value = String(state.settings.fetchCount);
@@ -1508,7 +1677,7 @@ function wireBulkNameCleanup() {
   document.getElementById("bulk-name-search-btn").addEventListener("click", async () => {
     const name = input.value.trim();
     if (!name) { alert("Vul eerst een afzendernaam in, bijv. Zalando."); return; }
-    const connected = state.accounts.filter(a => a.token);
+    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
     if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
 
     resultBox.classList.add("hidden");
@@ -1604,7 +1773,7 @@ function wireWebshopSettings() {
 
   const statusEl = document.getElementById("backfill-webshop-status");
   document.getElementById("backfill-webshop-btn").addEventListener("click", async () => {
-    const connected = state.accounts.filter(a => a.token);
+    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
     if (connected.length === 0) { alert("Verbind eerst minstens één account."); return; }
     statusEl.classList.remove("hidden");
     statusEl.textContent = "Bezig...";
@@ -1636,7 +1805,7 @@ function wireCleanupModal() {
   document.getElementById("cleanup-trash-btn").addEventListener("click", () => runCleanup("trash"));
 
   async function runCleanup(action) {
-    const connected = state.accounts.filter(a => a.token);
+    const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
     if (connected.length === 0) {
       alert("Verbind eerst minstens één account.");
       return;
