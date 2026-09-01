@@ -1,6 +1,6 @@
 {
-  "name": "Postbus",
-  "short_name": "Postbus",
+  "name": "RGO",
+  "short_name": "RGO",
   "description": "Al je Gmail-accounts in één overzicht, met automatische regels.",
   "start_url": "./index.html",
   "display": "standalone",
