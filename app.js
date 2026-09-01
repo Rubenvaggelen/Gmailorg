@@ -488,6 +488,8 @@ async function executeRuleAction(rule, message, account) {
   try {
     if (rule.action === "archive") {
       await modifyLabels(message.id, account.token, { removeLabelIds: ["INBOX"] });
+    } else if (rule.action === "trash") {
+      await modifyLabels(message.id, account.token, { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX", "UNREAD"] });
     } else if (rule.action === "label") {
       console.log(`Label '${rule.actionValue}' toepassen op ${message.id} (labels.create + modify volgt)`);
     } else if (rule.action === "autoreply") {
@@ -988,7 +990,7 @@ function renderRules() {
   list.innerHTML = "";
   empty.classList.toggle("hidden", state.rules.length > 0);
 
-  const actionLabel = { archive: "Archiveert", label: "Labelt", autoreply: "Auto-reply" };
+  const actionLabel = { archive: "Archiveert", trash: "Verwijdert", label: "Labelt", autoreply: "Auto-reply" };
 
   state.rules.forEach((rule, idx) => {
     const li = document.createElement("li");
@@ -1370,7 +1372,7 @@ function wireRuleModal() {
 
   actionSelect.addEventListener("change", updateActionValueVisibility);
   function updateActionValueVisibility() {
-    if (actionSelect.value === "archive") valueWrap.classList.add("hidden");
+    if (actionSelect.value === "archive" || actionSelect.value === "trash") valueWrap.classList.add("hidden");
     else {
       valueWrap.classList.remove("hidden");
       valueLabel.textContent = actionSelect.value === "label" ? "Label naam" : "Auto-reply tekst";
