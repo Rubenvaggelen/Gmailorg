@@ -680,3 +680,21 @@ main {
 
 .reply-box { margin-top: 12px; }
 .reply-box textarea { margin-bottom: 8px; }
+
+/* ---------- Settings hint text / cleanup modal ---------- */
+
+.settings-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+#cleanup-progress, #cleanup-result {
+  text-align: center;
+  padding: 10px 0;
+}
+
+#cleanup-result-text {
+  white-space: pre-line;
+}
