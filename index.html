@@ -77,7 +77,10 @@
     <section id="view-accounts" class="view hidden">
       <div class="section-head">
         <h2>Accounts</h2>
-        <button id="add-account-btn-2" class="btn-primary small">+ Account</button>
+        <div style="display:flex; gap:8px;">
+          <button id="add-account-btn-2" class="btn-primary small">+ Google</button>
+          <button id="add-microsoft-btn" class="btn-ghost">+ Hotmail</button>
+        </div>
       </div>
       <ul id="accounts-list" class="accounts-list"></ul>
     </section>
@@ -120,6 +123,19 @@
     <section id="view-settings" class="view hidden">
       <div class="section-head">
         <h2>Instellingen</h2>
+      </div>
+
+      <div class="settings-group">
+        <h3>Hotmail / Outlook koppelen</h3>
+        <p class="settings-hint">
+          Nodig om Hotmail-accounts te kunnen toevoegen: een gratis
+          Microsoft Azure-appregistratie. Vraag hier hulp bij als je 'm nog
+          niet hebt.
+        </p>
+        <label class="field">
+          <span>Microsoft Client ID</span>
+          <input id="setting-ms-client-id" type="text" placeholder="bijv. 3f8a1c2e-....-....-....-............" />
+        </label>
       </div>
 
       <div class="settings-group">
@@ -415,6 +431,7 @@
   </div>
 </div>
 
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js" async defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js"></script>
 </body>
