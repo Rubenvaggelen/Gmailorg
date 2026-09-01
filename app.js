@@ -48,7 +48,7 @@ const state = {
 
 function persistAccounts() {
   localStorage.setItem("postbus:accounts", JSON.stringify(
-    state.accounts.map(a => ({ email: a.email, color: a.color }))
+    state.accounts.map(a => ({ email: a.email, color: a.color, token: a.token, tokenExpiry: a.tokenExpiry }))
   ));
 }
 function persistRules() { localStorage.setItem("postbus:rules", JSON.stringify(state.rules)); }
@@ -83,7 +83,21 @@ function initSetup() {
 /* ---------------- Boot ---------------- */
 
 function boot() {
-  state.accounts = state.accounts.map(a => ({ ...a, token: null }));
+  // Token blijft geldig totdat hij écht verloopt (Google-tokens duren
+  // doorgaans ~1 uur) — alleen dán moet opnieuw ingelogd worden, niet bij
+  // elke herstart van de app.
+  const now = Date.now();
+  state.accounts = state.accounts.map(a => {
+    const stillValid = a.token && a.tokenExpiry && a.tokenExpiry > now + 60000;
+    return stillValid ? a : { ...a, token: null };
+  });
+
+  // Voor elk account: plan een stille ververs-poging vlak vóór het token
+  // verloopt, of probeer er meteen één als het token al verlopen is.
+  state.accounts.forEach(a => {
+    if (a.token) scheduleSilentRefresh(a);
+    else silentRefreshAccount(a.email);
+  });
 
   renderAccounts();
   renderChips();
@@ -145,19 +159,60 @@ async function fetchProfile(token) {
 function addOrUpdateAccount(email, token, expiresIn) {
   const existing = state.accounts.find(a => a.email === email);
   const tokenExpiry = Date.now() + expiresIn * 1000;
+  let account;
   if (existing) {
     existing.token = token;
     existing.tokenExpiry = tokenExpiry;
+    account = existing;
   } else {
-    state.accounts.push({ email, color: COLORS[state.accounts.length % COLORS.length], token, tokenExpiry });
+    account = { email, color: COLORS[state.accounts.length % COLORS.length], token, tokenExpiry };
+    state.accounts.push(account);
   }
   persistAccounts();
+  scheduleSilentRefresh(account);
   renderAccounts();
   renderChips();
   renderCalendarAccountChips();
   updateSubline();
   refreshInbox();
   refreshCalendar();
+}
+
+/* ---------------- Stil verversen op de achtergrond ---------------- */
+
+function scheduleSilentRefresh(account) {
+  if (account.refreshTimer) clearTimeout(account.refreshTimer);
+  if (!account.tokenExpiry) return;
+  // 5 minuten vóór het verlopen proberen te verversen, met een ondergrens
+  // zodat we niet meteen in een loop terechtkomen.
+  const delay = Math.max(account.tokenExpiry - Date.now() - 5 * 60 * 1000, 10000);
+  account.refreshTimer = setTimeout(() => silentRefreshAccount(account.email), delay);
+}
+
+function silentRefreshAccount(email, retriesLeft = 3) {
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    // Het Google-inlogscript (async geladen) is er soms nog niet meteen bij
+    // het opstarten — een paar keer opnieuw proberen met een korte pauze.
+    if (retriesLeft > 0) setTimeout(() => silentRefreshAccount(email, retriesLeft - 1), 1500);
+    return;
+  }
+  try {
+    const tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: state.clientId,
+      scope: SCOPES,
+      hint: email,
+      callback: (resp) => {
+        if (resp.error) {
+          console.warn("Stil verversen mislukt voor", email, resp.error);
+          return; // gebruiker moet dan handmatig opnieuw verbinden via + Account
+        }
+        addOrUpdateAccount(email, resp.access_token, resp.expires_in);
+      }
+    });
+    tokenClient.requestAccessToken({ prompt: "" });
+  } catch (e) {
+    console.warn("Stil verversen kon niet starten voor", email, e);
+  }
 }
 
 function removeAccount(email) {
