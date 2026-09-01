@@ -82,6 +82,7 @@ const state = {
   activeCategoryFilter: null,
   activeCalendarAccountFilter: null,
   activeRange: "week",
+  calendarSubView: "agenda",
   activeFolder: "INBOX",
   searchQuery: "",
   activeView: "inbox",
@@ -148,6 +149,7 @@ function boot() {
   renderCategoryChips();
   renderCalendarAccountChips();
   renderRangeChips();
+  renderCalendarSubtabs();
   renderRules();
   updateSubline();
 
@@ -158,6 +160,7 @@ function boot() {
   wireComposeModal();
   wireEventModal();
   wireSettings();
+  wireRestaurants();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1038,6 +1041,147 @@ function renderRangeChips() {
     chip.textContent = label;
     chip.addEventListener("click", () => { state.activeRange = key; renderRangeChips(); refreshCalendar(); });
     wrap.appendChild(chip);
+  });
+}
+
+/* ---------------- Kalender-subtabs: Agenda / Restaurants ---------------- */
+
+function renderCalendarSubtabs() {
+  const wrap = document.getElementById("calendar-subview-chips");
+  wrap.innerHTML = "";
+  const tabs = { agenda: "Agenda", restaurants: "Restaurants in de buurt" };
+  Object.entries(tabs).forEach(([key, label]) => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (state.calendarSubView === key ? " active" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      state.calendarSubView = key;
+      renderCalendarSubtabs();
+      document.getElementById("calendar-agenda-panel").classList.toggle("hidden", key !== "agenda");
+      document.getElementById("restaurants-panel").classList.toggle("hidden", key !== "restaurants");
+    });
+    wrap.appendChild(chip);
+  });
+}
+
+function wireRestaurants() {
+  document.getElementById("find-restaurants-btn").addEventListener("click", findNearbyRestaurants);
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function findNearbyRestaurants() {
+  const statusEl = document.getElementById("restaurants-status");
+  const emptyEl = document.getElementById("restaurants-empty");
+  const listEl = document.getElementById("restaurant-list");
+
+  if (!("geolocation" in navigator)) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Locatie is niet beschikbaar in deze browser.";
+    return;
+  }
+
+  statusEl.classList.remove("hidden");
+  statusEl.textContent = "Je locatie wordt opgevraagd...";
+  emptyEl.classList.add("hidden");
+  listEl.innerHTML = "";
+
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      const { latitude, longitude } = position.coords;
+      statusEl.textContent = "Restaurants in de buurt zoeken...";
+      try {
+        const restaurants = await fetchNearbyRestaurants(latitude, longitude);
+        renderRestaurants(restaurants, latitude, longitude);
+      } catch (e) {
+        console.error("Restaurants zoeken mislukt", e);
+        statusEl.textContent = "Zoeken mislukt — probeer het straks nog eens.";
+      }
+    },
+    (err) => {
+      statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
+    },
+    { enableHighAccuracy: false, timeout: 15000 }
+  );
+}
+
+async function fetchNearbyRestaurants(lat, lon) {
+  const radius = 1500; // meter
+  const query = `
+    [out:json][timeout:25];
+    (
+      node["amenity"="restaurant"](around:${radius},${lat},${lon});
+      way["amenity"="restaurant"](around:${radius},${lat},${lon});
+    );
+    out center tags;
+  `;
+  const r = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: query
+  });
+  if (!r.ok) throw new Error("Overpass API-fout");
+  const data = await r.json();
+
+  return (data.elements || [])
+    .map(el => {
+      const tags = el.tags || {};
+      const elLat = el.lat ?? el.center?.lat;
+      const elLon = el.lon ?? el.center?.lon;
+      if (!tags.name || elLat == null || elLon == null) return null;
+      return {
+        name: tags.name,
+        cuisine: tags.cuisine ? tags.cuisine.replace(/_/g, " ") : "",
+        openingHours: tags.opening_hours || "",
+        address: [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" "),
+        distance: haversineDistanceMeters(lat, lon, elLat, elLon)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.distance - b.distance);
+}
+
+function renderRestaurants(restaurants, userLat, userLon) {
+  const statusEl = document.getElementById("restaurants-status");
+  const emptyEl = document.getElementById("restaurants-empty");
+  const listEl = document.getElementById("restaurant-list");
+
+  listEl.innerHTML = "";
+
+  if (restaurants.length === 0) {
+    statusEl.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+    emptyEl.querySelector(".empty-title").textContent = "Niets gevonden";
+    emptyEl.querySelector(".empty-copy").textContent = "Geen restaurants gevonden binnen 1,5 km van je locatie.";
+    return;
+  }
+
+  statusEl.classList.add("hidden");
+  emptyEl.classList.add("hidden");
+
+  restaurants.slice(0, 40).forEach(r => {
+    const li = document.createElement("li");
+    li.className = "restaurant-row";
+    const distanceLabel = r.distance < 1000
+      ? `${Math.round(r.distance)} m`
+      : `${(r.distance / 1000).toFixed(1)} km`;
+    li.innerHTML = `
+      <div class="restaurant-top">
+        <span class="restaurant-name">${escapeHtml(r.name)}</span>
+        <span class="restaurant-distance">${distanceLabel}</span>
+      </div>
+      ${r.cuisine ? `<div class="restaurant-cuisine">${escapeHtml(r.cuisine)}</div>` : ""}
+      <div class="restaurant-hours">${r.openingHours ? escapeHtml(r.openingHours) : "Openingstijden onbekend"}</div>
+      ${r.address ? `<div class="restaurant-address">${escapeHtml(r.address)}</div>` : ""}
+    `;
+    listEl.appendChild(li);
   });
 }
 
