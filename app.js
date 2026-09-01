@@ -1081,6 +1081,109 @@ function wireSettings() {
     localStorage.clear();
     location.reload();
   });
+
+  wireCleanupModal();
+}
+
+/* ---------------- Promotiemail opruimen (eenmalige bulkactie) ---------------- */
+
+function wireCleanupModal() {
+  const modal = document.getElementById("cleanup-modal");
+  const choiceBox = document.getElementById("cleanup-choice");
+  const progressBox = document.getElementById("cleanup-progress");
+  const resultBox = document.getElementById("cleanup-result");
+  const statusEl = document.getElementById("cleanup-status");
+  const resultEl = document.getElementById("cleanup-result-text");
+
+  document.getElementById("cleanup-promotions-btn").addEventListener("click", () => {
+    choiceBox.classList.remove("hidden");
+    progressBox.classList.add("hidden");
+    resultBox.classList.add("hidden");
+    modal.classList.remove("hidden");
+  });
+
+  document.getElementById("cleanup-close").addEventListener("click", () => modal.classList.add("hidden"));
+
+  document.getElementById("cleanup-archive-btn").addEventListener("click", () => runCleanup("archive"));
+  document.getElementById("cleanup-trash-btn").addEventListener("click", () => runCleanup("trash"));
+
+  async function runCleanup(action) {
+    const connected = state.accounts.filter(a => a.token);
+    if (connected.length === 0) {
+      alert("Verbind eerst minstens één account.");
+      return;
+    }
+    choiceBox.classList.add("hidden");
+    progressBox.classList.remove("hidden");
+    resultBox.classList.add("hidden");
+
+    let totalHandled = 0;
+    const perAccountResults = [];
+
+    for (const account of connected) {
+      statusEl.textContent = `Bezig met ${account.email}...`;
+      try {
+        const ids = await fetchPromotionMessageIds(account);
+        if (ids.length > 0) {
+          await bulkModifyMessages(account, ids, action);
+        }
+        totalHandled += ids.length;
+        perAccountResults.push(`${account.email}: ${ids.length}`);
+      } catch (e) {
+        console.error("Opruimen mislukt voor", account.email, e);
+        perAccountResults.push(`${account.email}: mislukt`);
+      }
+    }
+
+    progressBox.classList.add("hidden");
+    resultBox.classList.remove("hidden");
+    const actionLabel = action === "archive" ? "gearchiveerd" : "naar de prullenbak verplaatst";
+    resultEl.textContent = `Klaar — ${totalHandled} berichten ${actionLabel}.\n` + perAccountResults.join(" · ");
+
+    // Als de huidige map Postvak IN is, ververs de weergave.
+    if (state.activeFolder === "INBOX") refreshInbox();
+  }
+}
+
+async function fetchPromotionMessageIds(account) {
+  const ids = [];
+  let pageToken = null;
+  let pages = 0;
+  do {
+    const params = new URLSearchParams({
+      q: "category:promotions",
+      maxResults: "500"
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const r = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${account.token}` } }
+    );
+    if (!r.ok) break;
+    const data = await r.json();
+    (data.messages || []).forEach(m => ids.push(m.id));
+    pageToken = data.nextPageToken || null;
+    pages += 1;
+  } while (pageToken && pages < 10); // veiligheidsgrens: max 5000 berichten per account per keer
+
+  return ids;
+}
+
+async function bulkModifyMessages(account, ids, action) {
+  const body = action === "archive"
+    ? { removeLabelIds: ["INBOX"] }
+    : { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX", "UNREAD"] };
+
+  // Gmail's batchModify accepteert maximaal 1000 id's per aanroep.
+  for (let i = 0; i < ids.length; i += 1000) {
+    const chunk = ids.slice(i, i + 1000);
+    await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: chunk, ...body })
+    });
+  }
 }
 
 /* ---------------- Polling ---------------- */
