@@ -58,18 +58,22 @@ h1, h2 {
 }
 
 .setup-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--amber);
-  color: #201505;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 17px;
   margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.setup-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
 }
 
 .setup-card h1 {
@@ -177,18 +181,22 @@ h1, h2 {
 }
 
 .tower-mark {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 10px;
-  background: var(--amber);
-  color: #201505;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  background: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tower-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 5px;
 }
 
 .tower h1 { font-size: 20px; }

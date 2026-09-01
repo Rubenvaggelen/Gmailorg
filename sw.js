@@ -1,5 +1,5 @@
 const CACHE = "postbus-shell-v1";
-const SHELL = ["./index.html", "./style.css", "./app.js", "./manifest.json"];
+const SHELL = ["./index.html", "./style.css", "./app.js", "./manifest.json", "./logo-mark.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

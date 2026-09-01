@@ -1,6 +1,6 @@
 {
-  "name": "RGO",
-  "short_name": "RGO",
+  "name": "Gmail Org",
+  "short_name": "Gmail Org",
   "description": "Al je Gmail-accounts in één overzicht, met automatische regels.",
   "start_url": "./index.html",
   "display": "standalone",
