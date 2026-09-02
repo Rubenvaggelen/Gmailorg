@@ -153,6 +153,7 @@ function boot() {
   });
 
   renderAccounts();
+  renderReconnectBanner();
   renderChips();
   renderFolderChips();
   renderCategoryChips();
@@ -176,6 +177,12 @@ function boot() {
   document.getElementById("add-microsoft-btn").addEventListener("click", startAddMicrosoftAccount);
   document.getElementById("compose-btn").addEventListener("click", openCompose);
   document.getElementById("add-event-btn").addEventListener("click", () => openEventModal("create"));
+  document.getElementById("reconnect-banner").addEventListener("click", reconnectAllAccounts);
+
+  // Meteen data laden voor accounts die nog een geldig token hebben, in
+  // plaats van te wachten tot de eerste polling-ronde.
+  refreshInbox();
+  refreshCalendar();
 
   startPolling();
 }
@@ -184,6 +191,28 @@ function updateSubline() {
   const n = state.accounts.length;
   document.getElementById("tower-subline").textContent =
     n === 0 ? "0 accounts verbonden" : `${n} account${n > 1 ? "s" : ""} verbonden`;
+}
+
+/* ---------------- Reconnect-banner (Postvak) ---------------- */
+
+function renderReconnectBanner() {
+  const banner = document.getElementById("reconnect-banner");
+  if (!banner) return;
+  const needsReconnect = state.accounts.filter(a => !a.token);
+  if (needsReconnect.length === 0) {
+    banner.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("hidden");
+  banner.querySelector(".empty-copy").textContent =
+    `Tik hier om ${needsReconnect.length} account${needsReconnect.length > 1 ? "s" : ""} opnieuw te verbinden.`;
+}
+
+function reconnectAllAccounts() {
+  state.accounts.filter(a => !a.token).forEach(a => {
+    if (a.provider === "microsoft") reconnectMicrosoftAccount(a.email);
+    else reconnectAccount(a.email);
+  });
 }
 
 /* ---------------- Google OAuth ---------------- */
@@ -228,6 +257,7 @@ function addOrUpdateAccount(email, token, expiresIn, provider = "google") {
   persistAccounts();
   if (provider === "google") scheduleSilentRefresh(account);
   renderAccounts();
+  renderReconnectBanner();
   renderChips();
   renderCalendarAccountChips();
   updateSubline();
@@ -333,6 +363,7 @@ function removeAccount(email) {
   state.events = state.events.filter(e => e.accountEmail !== email);
   persistAccounts();
   renderAccounts();
+  renderReconnectBanner();
   renderChips();
   renderMessages();
   renderCalendarAccountChips();
