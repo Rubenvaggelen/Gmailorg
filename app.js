@@ -178,6 +178,8 @@ function boot() {
   document.getElementById("compose-btn").addEventListener("click", openCompose);
   document.getElementById("add-event-btn").addEventListener("click", () => openEventModal("create"));
   document.getElementById("reconnect-banner").addEventListener("click", reconnectAllAccounts);
+  document.getElementById("inbox-empty-connect-btn").addEventListener("click", startAddAccount);
+  document.getElementById("calendar-empty-connect-btn").addEventListener("click", startAddAccount);
 
   // Meteen data laden voor accounts die nog een geldig token hebben, in
   // plaats van te wachten tot de eerste polling-ronde.
