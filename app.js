@@ -26,7 +26,7 @@ const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"
 const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen", webshop: "Webshops" };
 const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
 const MS_FOLDER_MAP = { INBOX: "inbox", SENT: "sentitems", DRAFT: "drafts", TRASH: "deleteditems" };
-const MS_SCOPES = ["Mail.Read", "Mail.ReadWrite", "Mail.Send", "User.Read"];
+const MS_SCOPES = ["Mail.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite", "User.Read"];
 const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
 const WEBSHOP_LABEL_NAME = "Webshops";
@@ -941,7 +941,7 @@ function rangeBounds(range) {
 }
 
 async function refreshCalendar() {
-  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
+  const connected = state.accounts.filter(a => a.token);
   if (connected.length === 0) { state.events = []; renderEvents(); return; }
 
   const { timeMin, timeMax } = rangeBounds(state.activeRange);
@@ -951,6 +951,7 @@ async function refreshCalendar() {
 }
 
 async function fetchAccountEvents(account, timeMin, timeMax) {
+  if (account.provider === "microsoft") return fetchMicrosoftEvents(account, timeMin, timeMax);
   try {
     const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "50" });
     const r = await fetch(
@@ -977,35 +978,90 @@ async function fetchAccountEvents(account, timeMin, timeMax) {
   }
 }
 
+async function fetchMicrosoftEvents(account, timeMin, timeMax) {
+  try {
+    const params = new URLSearchParams({
+      startDateTime: timeMin,
+      endDateTime: timeMax,
+      $select: "subject,bodyPreview,location,start,end,isAllDay,attendees",
+      $orderby: "start/dateTime"
+    });
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/calendarView?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${account.token}`, Prefer: 'outlook.timezone="UTC"' } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.value || []).map(ev => ({
+      id: ev.id,
+      accountEmail: account.email,
+      accountColor: account.color,
+      title: ev.subject || "(geen titel)",
+      location: ev.location?.displayName || "",
+      description: ev.bodyPreview || "",
+      start: new Date(ev.start?.dateTime + "Z").getTime(),
+      end: new Date(ev.end?.dateTime + "Z").getTime(),
+      allDay: Boolean(ev.isAllDay),
+      attendees: (ev.attendees || []).map(a => a.emailAddress?.address).filter(Boolean)
+    }));
+  } catch (e) {
+    console.error("Kalender ophalen (Microsoft) mislukt voor", account.email, e);
+    return [];
+  }
+}
+
 async function createEvent(accountEmail, data) {
   const account = state.accounts.find(a => a.email === accountEmail);
   if (!account || !account.token) return;
-  await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(buildEventBody(data))
-  });
+  if (account.provider === "microsoft") {
+    await fetch("https://graph.microsoft.com/v1.0/me/events", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(buildMicrosoftEventBody(data))
+    });
+  } else {
+    await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(buildEventBody(data))
+    });
+  }
   refreshCalendar();
 }
 
 async function updateEvent(accountEmail, eventId, data) {
   const account = state.accounts.find(a => a.email === accountEmail);
   if (!account || !account.token) return;
-  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(buildEventBody(data))
-  });
+  if (account.provider === "microsoft") {
+    await fetch(`https://graph.microsoft.com/v1.0/me/events/${eventId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(buildMicrosoftEventBody(data))
+    });
+  } else {
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(buildEventBody(data))
+    });
+  }
   refreshCalendar();
 }
 
 async function deleteEvent(accountEmail, eventId) {
   const account = state.accounts.find(a => a.email === accountEmail);
   if (!account || !account.token) return;
-  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${account.token}` }
-  });
+  if (account.provider === "microsoft") {
+    await fetch(`https://graph.microsoft.com/v1.0/me/events/${eventId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${account.token}` }
+    });
+  } else {
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${account.token}` }
+    });
+  }
   refreshCalendar();
 }
 
@@ -1014,6 +1070,26 @@ function buildEventBody({ title, start, end, allDay, location, description, gues
   if (allDay) { body.start = { date: start }; body.end = { date: end }; }
   else { body.start = { dateTime: new Date(start).toISOString() }; body.end = { dateTime: new Date(end).toISOString() }; }
   if (guests && guests.length) body.attendees = guests.map(email => ({ email }));
+  return body;
+}
+
+function buildMicrosoftEventBody({ title, start, end, allDay, location, description, guests }) {
+  const body = {
+    subject: title,
+    body: { contentType: "Text", content: description || "" },
+    location: { displayName: location || "" },
+    isAllDay: Boolean(allDay)
+  };
+  if (allDay) {
+    body.start = { dateTime: `${start}T00:00:00`, timeZone: "UTC" };
+    body.end = { dateTime: `${end}T00:00:00`, timeZone: "UTC" };
+  } else {
+    body.start = { dateTime: new Date(start).toISOString().replace("Z", ""), timeZone: "UTC" };
+    body.end = { dateTime: new Date(end).toISOString().replace("Z", ""), timeZone: "UTC" };
+  }
+  if (guests && guests.length) {
+    body.attendees = guests.map(email => ({ emailAddress: { address: email }, type: "required" }));
+  }
   return body;
 }
 
@@ -1255,7 +1331,7 @@ function renderCalendarAccountChips() {
   allChip.addEventListener("click", () => { state.activeCalendarAccountFilter = null; renderCalendarAccountChips(); renderEvents(); });
   wrap.appendChild(allChip);
 
-  state.accounts.filter(a => a.provider !== "microsoft").forEach(a => {
+  state.accounts.forEach(a => {
     const chip = document.createElement("button");
     chip.className = "chip" + (state.activeCalendarAccountFilter === a.email ? " active" : "");
     chip.innerHTML = `<span class="chip-dot" style="background:${a.color}"></span>${a.email.split("@")[0]}`;
@@ -1477,7 +1553,7 @@ function toLocalInputValue(timestamp) {
 }
 
 function openEventModal(mode, ev) {
-  const connected = state.accounts.filter(a => a.token && a.provider !== "microsoft");
+  const connected = state.accounts.filter(a => a.token);
   if (connected.length === 0) { alert("Verbind eerst een account voordat je een afspraak kunt maken."); return; }
 
   activeEditEvent = mode === "edit" ? ev : null;
