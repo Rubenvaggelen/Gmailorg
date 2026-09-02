@@ -197,10 +197,22 @@ function updateSubline() {
 
 /* ---------------- Reconnect-banner (Postvak) ---------------- */
 
+let lastReconnectCount = 0;
+
 function renderReconnectBanner() {
   const banner = document.getElementById("reconnect-banner");
   if (!banner) return;
   const needsReconnect = state.accounts.filter(a => !a.token);
+
+  // Zodra er (opnieuw) een account is dat niet meer verbonden is — d.w.z.
+  // "uitgelogd" — wissen we de service-worker cache automatisch, zodat de
+  // eerstvolgende keer dat de app wordt geopend gegarandeerd de nieuwste
+  // versie wordt geladen in plaats van een verouderde, gecachete versie.
+  if (needsReconnect.length > 0 && lastReconnectCount === 0) {
+    clearAppCache();
+  }
+  lastReconnectCount = needsReconnect.length;
+
   if (needsReconnect.length === 0) {
     banner.classList.add("hidden");
     return;
@@ -208,6 +220,21 @@ function renderReconnectBanner() {
   banner.classList.remove("hidden");
   banner.querySelector(".empty-copy").textContent =
     `Tik hier om ${needsReconnect.length} account${needsReconnect.length > 1 ? "s" : ""} opnieuw te verbinden.`;
+}
+
+function clearAppCache() {
+  if (!("caches" in window)) return;
+  caches.keys()
+    .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+    .catch((e) => console.warn("Cache wissen mislukt", e));
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return;
+      if (reg.active) reg.active.postMessage({ type: "CLEAR_CACHE" });
+      reg.update();
+    }).catch(() => {});
+  }
 }
 
 function reconnectAllAccounts() {
@@ -1833,6 +1860,7 @@ function wireSettings() {
   document.getElementById("reset-app-btn").addEventListener("click", () => {
     if (!confirm("Weet je zeker dat je alles wilt wissen? Dit verwijdert je accounts, regels en instellingen uit deze browser.")) return;
     localStorage.clear();
+    clearAppCache();
     location.reload();
   });
 
