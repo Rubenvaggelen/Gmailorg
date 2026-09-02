@@ -235,6 +235,37 @@ h1, h2 {
   width: auto;
 }
 
+/* ---------- View switch (Postvak / Kalender) ---------- */
+
+.view-switch {
+  display: flex;
+  gap: 6px;
+  padding: 12px 16px 0;
+  background: var(--bg);
+}
+
+.view-switch .tab {
+  flex: 1;
+  flex-direction: row;
+  gap: 7px;
+  padding: 10px 0;
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.view-switch .tab.active {
+  background: var(--amber-dim);
+  border-color: var(--amber);
+  color: var(--text);
+}
+
+.view-switch .tab.active .tab-dot {
+  background: var(--amber);
+}
+
 main {
   flex: 1;
   overflow-y: auto;
