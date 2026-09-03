@@ -1533,6 +1533,16 @@ function wireTrainPanel() {
 
 let currentTrainSearchDateTime = null;
 
+async function fetchNsTripsRaw(fromCode, toCode, dateTimeIso) {
+  const params = new URLSearchParams({ fromStation: fromCode, toStation: toCode, dateTime: dateTimeIso });
+  const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
+    headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
+  });
+  if (!r.ok) throw new Error("NS-aanvraag mislukt");
+  const data = await r.json();
+  return data.trips || [];
+}
+
 async function searchTrainTrips(overrideDateTimeIso) {
   const statusEl = document.getElementById("train-status");
   const emptyEl = document.getElementById("train-empty");
@@ -2070,6 +2080,151 @@ function wireEventModal() {
     if (!confirm("Deze afspraak verwijderen?")) return;
     deleteEvent(activeEditEvent.accountEmail, activeEditEvent.id);
     modal.classList.add("hidden");
+  });
+
+  wireEventRoutePanel();
+}
+
+function wireEventRoutePanel() {
+  const panel = document.getElementById("event-route-panel");
+  const trainForm = document.getElementById("event-route-train-form");
+  const ovForm = document.getElementById("event-route-ov-form");
+
+  document.getElementById("event-route-toggle").addEventListener("click", () => {
+    panel.classList.toggle("hidden");
+  });
+
+  document.getElementById("event-route-train-btn").addEventListener("click", () => {
+    trainForm.classList.remove("hidden");
+    ovForm.classList.add("hidden");
+  });
+  document.getElementById("event-route-ov-btn").addEventListener("click", () => {
+    ovForm.classList.remove("hidden");
+    trainForm.classList.add("hidden");
+  });
+
+  document.getElementById("event-route-train-search-btn").addEventListener("click", async () => {
+    const statusEl = document.getElementById("event-route-train-status");
+    const listEl = document.getElementById("event-route-train-results");
+    listEl.innerHTML = "";
+
+    if (!state.nsApiKey) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen."; return; }
+
+    const fromName = document.getElementById("event-route-train-from").value.trim();
+    const toName = document.getElementById("event-route-train-to").value.trim();
+    if (!fromName || !toName) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul zowel Van als Naar in."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Zoeken...";
+
+    await ensureStationsLoaded();
+    const fromCode = findStationCode(fromName);
+    const toCode = findStationCode(toName);
+    if (!fromCode || !toCode) { statusEl.textContent = "Kon een van de stations niet herkennen."; return; }
+
+    // Gebruik de starttijd van de afspraak als vertrekmoment.
+    const eventStart = document.getElementById("event-start").value;
+    const dateTimeIso = eventStart ? new Date(eventStart).toISOString() : new Date().toISOString();
+
+    try {
+      const trips = await fetchNsTripsRaw(fromCode, toCode, dateTimeIso);
+      statusEl.classList.add("hidden");
+      if (trips.length === 0) { statusEl.classList.remove("hidden"); statusEl.textContent = "Geen reizen gevonden."; return; }
+
+      trips.slice(0, 5).forEach(trip => {
+        const firstLeg = trip.legs?.[0];
+        const lastLeg = trip.legs?.[trip.legs.length - 1];
+        const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+        const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+        const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const transfers = Math.max((trip.legs?.length || 1) - 1, 0);
+        const platform = firstLeg?.origin?.actualTrack || firstLeg?.origin?.plannedTrack || "?";
+
+        const li = document.createElement("li");
+        li.className = "restaurant-row";
+        li.innerHTML = `
+          <div class="restaurant-top">
+            <span class="restaurant-name">${depFmt} → ${arrFmt}</span>
+            <span class="restaurant-distance">spoor ${escapeHtml(String(platform))}</span>
+          </div>
+          <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`}</div>
+          <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze reis</button>
+        `;
+        li.querySelector(".use-route-btn").addEventListener("click", () => {
+          const routeText = `Route: trein ${fromName} → ${toName}, vertrek ${depFmt}, aankomst ${arrFmt}, spoor ${platform}${transfers > 0 ? `, ${transfers} overstap${transfers > 1 ? "pen" : ""}` : ""}.`;
+          const descEl = document.getElementById("event-description");
+          descEl.value = descEl.value ? `${descEl.value}\n\n${routeText}` : routeText;
+          panel.classList.add("hidden");
+        });
+        listEl.appendChild(li);
+      });
+    } catch (e) {
+      console.error("Route zoeken (trein) mislukt", e);
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = "Zoeken mislukt.";
+    }
+  });
+
+  document.getElementById("event-route-ov-search-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("event-route-ov-status");
+    const listEl = document.getElementById("event-route-ov-results");
+    listEl.innerHTML = "";
+
+    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Je locatie wordt opgevraagd...";
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        statusEl.textContent = "Haltes zoeken...";
+        await ensureOvStopsLoaded();
+        if (!ovStopsCache) { statusEl.textContent = "Kon de haltelijst niet ophalen."; return; }
+
+        const nearest = ovStopsCache
+          .map(s => ({ ...s, distance: haversineDistanceMeters(latitude, longitude, s.lat, s.lon) }))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 3);
+
+        statusEl.textContent = "Vertrektijden ophalen...";
+        const perStop = await Promise.all(nearest.map(async (stop) => ({ stop, passes: await fetchOvDepartures(stop.code) })));
+
+        statusEl.classList.add("hidden");
+        let any = false;
+        perStop.forEach(({ stop, passes }) => {
+          passes.forEach(p => {
+            any = true;
+            const time = p.ExpectedDepartureTime || p.TargetDepartureTime;
+            const timeFmt = time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+
+            const li = document.createElement("li");
+            li.className = "restaurant-row";
+            li.innerHTML = `
+              <div class="restaurant-top">
+                <span class="restaurant-name">${escapeHtml(p.LinePublicNumber || "")} → ${escapeHtml(p.DestinationName50 || "?")}</span>
+                <span class="restaurant-distance">${timeFmt}</span>
+              </div>
+              <div class="restaurant-cuisine">${escapeHtml(stop.name)}</div>
+              <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze rit</button>
+            `;
+            li.querySelector(".use-route-btn").addEventListener("click", () => {
+              const routeText = `Route: lijn ${p.LinePublicNumber || ""} richting ${p.DestinationName50 || "?"}, vertrek ${timeFmt} vanaf ${stop.name}.`;
+              const descEl = document.getElementById("event-description");
+              descEl.value = descEl.value ? `${descEl.value}\n\n${routeText}` : routeText;
+              panel.classList.add("hidden");
+            });
+            listEl.appendChild(li);
+          });
+        });
+        if (!any) { statusEl.classList.remove("hidden"); statusEl.textContent = "Geen vertrektijden gevonden."; }
+      },
+      (err) => {
+        statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
+      },
+      { enableHighAccuracy: false, timeout: 15000 }
+    );
   });
 }
 
