@@ -136,6 +136,22 @@
       </div>
 
       <div class="settings-group">
+        <h3>Adres-afkortingen</h3>
+        <p class="settings-hint">
+          Stel namen in (zoals "Huis" of "Werk") die overal waar je een
+          adres invoert — reisadvies, Auto- en OV-routes, vast
+          vertrekadres — automatisch worden herkend als het bijbehorende
+          adres.
+        </p>
+        <ul id="address-aliases-list" class="rules-list"></ul>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <input id="alias-name-input" type="text" placeholder="Naam (bijv. Huis)" style="flex:1;" />
+          <input id="alias-address-input" type="text" placeholder="Adres" style="flex:2;" />
+        </div>
+        <button id="alias-add-btn" class="btn-primary small" style="margin-top:8px;">+ Toevoegen</button>
+      </div>
+
+      <div class="settings-group">
         <h3>Vast vertrekadres</h3>
         <p class="settings-hint">
           Werkt je locatie niet (bijv. door een bedrijfsrestrictie op je
