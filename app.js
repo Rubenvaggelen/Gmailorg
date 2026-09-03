@@ -2792,6 +2792,9 @@ function wireEventRoutePanel() {
     carForm.classList.remove("hidden");
     trainForm.classList.add("hidden");
     ovForm.classList.add("hidden");
+    const carToInput = document.getElementById("event-route-car-to");
+    const eventLocation = document.getElementById("event-location").value.trim();
+    if (!carToInput.value && eventLocation) carToInput.value = eventLocation;
   });
 
   document.getElementById("event-route-train-search-btn").addEventListener("click", async () => {
@@ -2943,7 +2946,7 @@ function wireEventRoutePanel() {
 
       statusEl.textContent = "Reistijd berekenen...";
       const routeR = await fetch(
-        `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destLon},${destLat}?overview=false`
+        `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`
       );
       const routeData = await routeR.json();
       const route = routeData.routes?.[0];
@@ -2958,11 +2961,16 @@ function wireEventRoutePanel() {
       li.innerHTML = `
         <div class="restaurant-top">
           <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
-          <span class="restaurant-distance">${minutes} min</span>
+          <span class="restaurant-distance route-km-link" style="text-decoration:underline; cursor:pointer;">${minutes} min</span>
         </div>
-        <div class="restaurant-cuisine">${km} km</div>
+        <div class="restaurant-cuisine route-km-link" style="text-decoration:underline; cursor:pointer;">${km} km</div>
         <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze route</button>
       `;
+      li.querySelectorAll(".route-km-link").forEach(el => {
+        el.addEventListener("click", () => {
+          showRouteOnMap(origin, { lat: destLat, lon: destLon }, route.geometry, destination, route.legs?.[0]?.steps || []);
+        });
+      });
       li.querySelector(".use-route-btn").addEventListener("click", () => {
         const routeText = `Route: auto naar ${destination}, geschatte reistijd ${minutes} min (${km} km).`;
         const descEl = document.getElementById("event-description");
