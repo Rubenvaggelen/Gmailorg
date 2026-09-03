@@ -74,6 +74,7 @@ function looksLikeWebshopMail(message) {
 const state = {
   clientId: "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
   msClientId: localStorage.getItem("postbus:msClientId") || "",
+  nsApiKey: localStorage.getItem("postbus:nsApiKey") || "",
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
@@ -173,6 +174,8 @@ function boot() {
   wireEventModal();
   wireSettings();
   wireRestaurants();
+  wireTrainPanel();
+  wireOvPanel();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1465,7 +1468,7 @@ function renderRangeChips() {
 function renderCalendarSubtabs() {
   const wrap = document.getElementById("calendar-subview-chips");
   wrap.innerHTML = "";
-  const tabs = { agenda: "Agenda", restaurants: "Restaurants in de buurt" };
+  const tabs = { agenda: "Agenda", restaurants: "Restaurants in de buurt", train: "Treinreis", ov: "OV in de buurt" };
   Object.entries(tabs).forEach(([key, label]) => {
     const chip = document.createElement("button");
     chip.className = "chip" + (state.calendarSubView === key ? " active" : "");
@@ -1475,6 +1478,9 @@ function renderCalendarSubtabs() {
       renderCalendarSubtabs();
       document.getElementById("calendar-agenda-panel").classList.toggle("hidden", key !== "agenda");
       document.getElementById("restaurants-panel").classList.toggle("hidden", key !== "restaurants");
+      document.getElementById("train-panel").classList.toggle("hidden", key !== "train");
+      document.getElementById("ov-panel").classList.toggle("hidden", key !== "ov");
+      if (key === "train") ensureStationsLoaded();
     });
     wrap.appendChild(chip);
   });
@@ -1482,6 +1488,292 @@ function renderCalendarSubtabs() {
 
 function wireRestaurants() {
   document.getElementById("find-restaurants-btn").addEventListener("click", findNearbyRestaurants);
+}
+
+/* ---------------- Treinreis (NS Reisinformatie API) ---------------- */
+
+let nsStationsCache = null;
+
+async function ensureStationsLoaded() {
+  if (nsStationsCache || !state.nsApiKey) return;
+  try {
+    const r = await fetch("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations", {
+      headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    nsStationsCache = (data.payload || []).map(s => ({
+      name: s.namen?.lang || s.namen?.middel || s.code,
+      code: s.code
+    }));
+    const listEl = document.getElementById("train-stations-list");
+    listEl.innerHTML = nsStationsCache.map(s => `<option value="${escapeHtml(s.name)}"></option>`).join("");
+  } catch (e) {
+    console.error("Stationslijst ophalen mislukt", e);
+  }
+}
+
+function findStationCode(name) {
+  if (!nsStationsCache) return null;
+  const lower = name.trim().toLowerCase();
+  const exact = nsStationsCache.find(s => s.name.toLowerCase() === lower);
+  if (exact) return exact.code;
+  const partial = nsStationsCache.find(s => s.name.toLowerCase().includes(lower));
+  return partial ? partial.code : null;
+}
+
+function wireTrainPanel() {
+  const nowInput = document.getElementById("train-datetime");
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  nowInput.value = now.toISOString().slice(0, 16);
+
+  document.getElementById("train-search-btn").addEventListener("click", searchTrainTrips);
+}
+
+async function searchTrainTrips() {
+  const statusEl = document.getElementById("train-status");
+  const emptyEl = document.getElementById("train-empty");
+  const listEl = document.getElementById("train-trip-list");
+
+  if (!state.nsApiKey) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen.";
+    return;
+  }
+
+  await ensureStationsLoaded();
+  if (!nsStationsCache) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Kon de stationslijst niet ophalen — check je API-sleutel.";
+    return;
+  }
+
+  const fromName = document.getElementById("train-from").value.trim();
+  const toName = document.getElementById("train-to").value.trim();
+  const dateTime = document.getElementById("train-datetime").value;
+  if (!fromName || !toName) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Vul zowel een vertrek- als aankomststation in.";
+    return;
+  }
+
+  const fromCode = findStationCode(fromName);
+  const toCode = findStationCode(toName);
+  if (!fromCode || !toCode) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Kon een van de stations niet herkennen — kies een station uit de lijst.";
+    return;
+  }
+
+  statusEl.classList.remove("hidden");
+  statusEl.textContent = "Zoeken...";
+  emptyEl.classList.add("hidden");
+  listEl.innerHTML = "";
+
+  try {
+    const params = new URLSearchParams({
+      fromStation: fromCode,
+      toStation: toCode,
+      dateTime: dateTime ? new Date(dateTime).toISOString() : new Date().toISOString()
+    });
+    const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
+      headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
+    });
+    if (!r.ok) {
+      statusEl.textContent = "Zoeken mislukt — check je API-sleutel of probeer het later opnieuw.";
+      return;
+    }
+    const data = await r.json();
+    renderTrainTrips(data.trips || []);
+  } catch (e) {
+    console.error("Treinreis zoeken mislukt", e);
+    statusEl.textContent = "Zoeken mislukt.";
+  }
+}
+
+function renderTrainTrips(trips) {
+  const statusEl = document.getElementById("train-status");
+  const emptyEl = document.getElementById("train-empty");
+  const listEl = document.getElementById("train-trip-list");
+
+  listEl.innerHTML = "";
+
+  if (trips.length === 0) {
+    statusEl.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+    emptyEl.querySelector(".empty-title").textContent = "Geen reizen gevonden";
+    emptyEl.querySelector(".empty-copy").textContent = "Probeer een ander tijdstip of controleer de stationsnamen.";
+    return;
+  }
+
+  statusEl.classList.add("hidden");
+  emptyEl.classList.add("hidden");
+
+  trips.slice(0, 10).forEach(trip => {
+    const firstLeg = trip.legs?.[0];
+    const lastLeg = trip.legs?.[trip.legs.length - 1];
+    const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+    const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+    const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+    const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+    const transfers = Math.max((trip.legs?.length || 1) - 1, 0);
+    const platform = firstLeg?.origin?.actualTrack || firstLeg?.origin?.plannedTrack || "?";
+    const delayed = trip.status && trip.status !== "NORMAL";
+
+    const li = document.createElement("li");
+    li.className = "restaurant-row";
+    li.innerHTML = `
+      <div class="restaurant-top">
+        <span class="restaurant-name">${depFmt} → ${arrFmt}</span>
+        <span class="restaurant-distance">${trip.actualDurationInMinutes || trip.plannedDurationInMinutes || "?"} min</span>
+      </div>
+      <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`} · spoor ${escapeHtml(String(platform))}</div>
+      ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Verstoring/vertraging gemeld</div>` : ""}
+    `;
+    listEl.appendChild(li);
+  });
+}
+
+/* ---------------- OV in de buurt (OVapi — bus/tram/metro) ---------------- */
+
+let ovStopsCache = null;
+
+async function ensureOvStopsLoaded() {
+  if (ovStopsCache) return;
+  try {
+    const r = await fetch("https://v0.ovapi.nl/stopareacode/");
+    if (!r.ok) return;
+    const data = await r.json();
+    ovStopsCache = Object.values(data)
+      .filter(s => s.Latitude && s.Longitude && s.StopAreaCode)
+      .map(s => ({
+        code: s.StopAreaCode,
+        name: s.TimingPointName || s.StopAreaCode,
+        town: s.TimingPointTown || "",
+        lat: s.Latitude,
+        lon: s.Longitude
+      }));
+  } catch (e) {
+    console.error("OV-haltes ophalen mislukt", e);
+  }
+}
+
+function wireOvPanel() {
+  document.getElementById("find-ov-btn").addEventListener("click", findNearbyOvDepartures);
+}
+
+function findNearbyOvDepartures() {
+  const statusEl = document.getElementById("ov-status");
+  const emptyEl = document.getElementById("ov-empty");
+  const listEl = document.getElementById("ov-list");
+
+  if (!("geolocation" in navigator)) {
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Locatie is niet beschikbaar in deze browser.";
+    return;
+  }
+
+  statusEl.classList.remove("hidden");
+  statusEl.textContent = "Je locatie wordt opgevraagd...";
+  emptyEl.classList.add("hidden");
+  listEl.innerHTML = "";
+
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      const { latitude, longitude } = position.coords;
+      statusEl.textContent = "Haltes zoeken...";
+      await ensureOvStopsLoaded();
+      if (!ovStopsCache) {
+        statusEl.textContent = "Kon de haltelijst niet ophalen — probeer het later opnieuw.";
+        return;
+      }
+
+      const nearest = ovStopsCache
+        .map(s => ({ ...s, distance: haversineDistanceMeters(latitude, longitude, s.lat, s.lon) }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 4);
+
+      statusEl.textContent = "Vertrektijden ophalen...";
+      const perStop = await Promise.all(nearest.map(async (stop) => {
+        const passes = await fetchOvDepartures(stop.code);
+        return { stop, passes };
+      }));
+
+      renderOvDepartures(perStop);
+    },
+    (err) => {
+      statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
+    },
+    { enableHighAccuracy: false, timeout: 15000 }
+  );
+}
+
+async function fetchOvDepartures(stopCode) {
+  try {
+    const r = await fetch(`https://v0.ovapi.nl/stopareacode/${encodeURIComponent(stopCode)}/departures`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    const stopObj = data[stopCode] || Object.values(data)[0] || {};
+    const passes = [];
+    Object.values(stopObj).forEach(tp => {
+      Object.values(tp.Passes || {}).forEach(pass => passes.push(pass));
+    });
+    return passes
+      .filter(p => p.TargetDepartureTime || p.ExpectedDepartureTime)
+      .sort((a, b) => new Date(a.ExpectedDepartureTime || a.TargetDepartureTime) - new Date(b.ExpectedDepartureTime || b.TargetDepartureTime))
+      .slice(0, 6);
+  } catch (e) {
+    console.error("Vertrektijden ophalen mislukt voor", stopCode, e);
+    return [];
+  }
+}
+
+function renderOvDepartures(perStop) {
+  const statusEl = document.getElementById("ov-status");
+  const emptyEl = document.getElementById("ov-empty");
+  const listEl = document.getElementById("ov-list");
+
+  listEl.innerHTML = "";
+  const anyPasses = perStop.some(s => s.passes.length > 0);
+
+  if (!anyPasses) {
+    statusEl.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+    emptyEl.querySelector(".empty-title").textContent = "Niets gevonden";
+    emptyEl.querySelector(".empty-copy").textContent = "Geen live vertrektijden gevonden bij de dichtstbijzijnde haltes.";
+    return;
+  }
+
+  statusEl.classList.add("hidden");
+  emptyEl.classList.add("hidden");
+
+  perStop.forEach(({ stop, passes }) => {
+    if (passes.length === 0) return;
+
+    const heading = document.createElement("li");
+    heading.className = "event-day-heading";
+    const distanceLabel = stop.distance < 1000 ? `${Math.round(stop.distance)} m` : `${(stop.distance / 1000).toFixed(1)} km`;
+    heading.textContent = `${stop.name}${stop.town ? " · " + stop.town : ""} (${distanceLabel})`;
+    listEl.appendChild(heading);
+
+    passes.forEach(p => {
+      const time = p.ExpectedDepartureTime || p.TargetDepartureTime;
+      const timeFmt = time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+      const delayed = p.ExpectedDepartureTime && p.TargetDepartureTime && p.ExpectedDepartureTime !== p.TargetDepartureTime;
+
+      const li = document.createElement("li");
+      li.className = "restaurant-row";
+      li.innerHTML = `
+        <div class="restaurant-top">
+          <span class="restaurant-name">${escapeHtml(p.LinePublicNumber || "")} → ${escapeHtml(p.DestinationName50 || "?")}</span>
+          <span class="restaurant-distance">${timeFmt}</span>
+        </div>
+        ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Vertraagd</div>` : ""}
+      `;
+      listEl.appendChild(li);
+    });
+  });
 }
 
 function normalizeWebsiteUrl(url) {
@@ -1884,6 +2176,14 @@ function wireSettings() {
     state.msClientId = msClientIdInput.value.trim();
     localStorage.setItem("postbus:msClientId", state.msClientId);
     msalInstance = null; // opnieuw aanmaken met de nieuwe Client ID
+  });
+
+  const nsApiKeyInput = document.getElementById("setting-ns-api-key");
+  nsApiKeyInput.value = state.nsApiKey;
+  nsApiKeyInput.addEventListener("change", () => {
+    state.nsApiKey = nsApiKeyInput.value.trim();
+    localStorage.setItem("postbus:nsApiKey", state.nsApiKey);
+    nsStationsCache = null; // opnieuw ophalen met de nieuwe sleutel
   });
 
   pollSelect.value = String(state.settings.pollIntervalMinutes);
