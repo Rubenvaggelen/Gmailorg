@@ -474,6 +474,37 @@
       <span>Beschrijving (optioneel)</span>
       <textarea id="event-description" rows="3" placeholder="Details&hellip;"></textarea>
     </label>
+
+    <div style="margin-bottom:16px;">
+      <button id="event-route-toggle" type="button" class="btn-ghost small" style="width:auto;">+ Route toevoegen</button>
+      <div id="event-route-panel" class="hidden" style="margin-top:10px;">
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button id="event-route-train-btn" type="button" class="btn-ghost small" style="width:auto;">Trein</button>
+          <button id="event-route-ov-btn" type="button" class="btn-ghost small" style="width:auto;">Bus/tram (OV)</button>
+        </div>
+
+        <div id="event-route-train-form" class="hidden">
+          <label class="field">
+            <span>Van</span>
+            <input id="event-route-train-from" type="text" list="train-stations-list" placeholder="Bijv. Amsterdam Centraal" />
+          </label>
+          <label class="field">
+            <span>Naar</span>
+            <input id="event-route-train-to" type="text" list="train-stations-list" placeholder="Bijv. Utrecht Centraal" />
+          </label>
+          <button id="event-route-train-search-btn" type="button" class="btn-primary small">Zoek</button>
+          <p id="event-route-train-status" class="settings-hint hidden" style="margin-top:8px;"></p>
+          <ul id="event-route-train-results" class="restaurant-list" style="margin-top:10px;"></ul>
+        </div>
+
+        <div id="event-route-ov-form" class="hidden">
+          <button id="event-route-ov-search-btn" type="button" class="btn-primary small">Zoek OV bij mij in de buurt</button>
+          <p id="event-route-ov-status" class="settings-hint hidden" style="margin-top:8px;"></p>
+          <ul id="event-route-ov-results" class="restaurant-list" style="margin-top:10px;"></ul>
+        </div>
+      </div>
+    </div>
+
     <label class="field">
       <span>Gasten uitnodigen (optioneel, komma-gescheiden e-mails)</span>
       <input id="event-guests" type="text" placeholder="naam@voorbeeld.com, naam2@voorbeeld.com" />
