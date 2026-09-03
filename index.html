@@ -481,6 +481,7 @@
         <div style="display:flex; gap:8px; margin-bottom:10px;">
           <button id="event-route-train-btn" type="button" class="btn-ghost small" style="width:auto;">Trein</button>
           <button id="event-route-ov-btn" type="button" class="btn-ghost small" style="width:auto;">Bus/tram (OV)</button>
+          <button id="event-route-car-btn" type="button" class="btn-ghost small" style="width:auto;">Auto</button>
         </div>
 
         <div id="event-route-train-form" class="hidden">
@@ -501,6 +502,16 @@
           <button id="event-route-ov-search-btn" type="button" class="btn-primary small">Zoek OV bij mij in de buurt</button>
           <p id="event-route-ov-status" class="settings-hint hidden" style="margin-top:8px;"></p>
           <ul id="event-route-ov-results" class="restaurant-list" style="margin-top:10px;"></ul>
+        </div>
+
+        <div id="event-route-car-form" class="hidden">
+          <label class="field">
+            <span>Naar (adres of plaatsnaam)</span>
+            <input id="event-route-car-to" type="text" placeholder="Bijv. Kalverstraat 1, Amsterdam" />
+          </label>
+          <button id="event-route-car-search-btn" type="button" class="btn-primary small">Bereken reistijd</button>
+          <p id="event-route-car-status" class="settings-hint hidden" style="margin-top:8px;"></p>
+          <ul id="event-route-car-results" class="restaurant-list" style="margin-top:10px;"></ul>
         </div>
       </div>
     </div>
