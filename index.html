@@ -47,17 +47,6 @@
     </div>
   </header>
 
-  <nav class="view-switch">
-    <button class="tab active" data-view="inbox">
-      <span class="tab-dot"></span>
-      Postvak
-    </button>
-    <button class="tab" data-view="calendar">
-      <span class="tab-dot"></span>
-      Kalender
-    </button>
-  </nav>
-
   <main>
 
     <section id="view-inbox" class="view">
@@ -67,14 +56,9 @@
       <div class="filter-row filter-row-folders" id="folder-chips"></div>
       <div class="filter-row" id="account-chips"></div>
       <div class="filter-row filter-row-categories" id="category-chips"></div>
-      <div id="reconnect-banner" class="empty-state hidden" style="cursor:pointer;">
-        <p class="empty-title">Opnieuw verbinden nodig</p>
-        <p class="empty-copy"></p>
-      </div>
       <div id="inbox-empty" class="empty-state hidden">
         <p class="empty-title">Niets te zien hier</p>
         <p class="empty-copy">Verbind een account, of kies een andere map hierboven.</p>
-        <button id="inbox-empty-connect-btn" class="btn-primary small">+ Account verbinden</button>
       </div>
       <ul id="message-list" class="message-list"></ul>
     </section>
@@ -115,7 +99,6 @@
         <div id="calendar-empty" class="empty-state hidden">
           <p class="empty-title">Geen afspraken</p>
           <p class="empty-copy">Niets gepland in deze periode, of verbind eerst een account.</p>
-          <button id="calendar-empty-connect-btn" class="btn-primary small">+ Account verbinden</button>
         </div>
         <ul id="event-list" class="event-list"></ul>
       </div>
@@ -275,6 +258,18 @@
   </main>
 
   <nav class="tabbar">
+    <button class="tab active" data-view="inbox">
+      <span class="tab-dot"></span>
+      Inbox
+    </button>
+    <button class="tab" data-view="calendar">
+      <span class="tab-dot"></span>
+      Kalender
+    </button>
+    <button class="tab" data-view="archive">
+      <span class="tab-dot"></span>
+      Archief
+    </button>
     <button class="tab" data-view="rules">
       <span class="tab-dot"></span>
       Regels
