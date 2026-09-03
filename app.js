@@ -93,6 +93,11 @@ const state = {
   msClientId: localStorage.getItem("postbus:msClientId") || "",
   nsApiKey: localStorage.getItem("postbus:nsApiKey") || "",
   fixedOrigin: localStorage.getItem("postbus:fixedOrigin") || "",
+  addressAliases: JSON.parse(localStorage.getItem("postbus:addressAliases") || "null") || {
+    "c.a snackcident": "Vianenstraat 31",
+    "huis": "Olle Kapoenstraat 2",
+    "werk": "Amsterdam Station Zuid"
+  },
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
@@ -2006,10 +2011,14 @@ async function resolveOrigin(fromAddress) {
 }
 
 async function geocodeAddress(query) {
+  const trimmed = query.trim();
+  const alias = state.addressAliases[trimmed.toLowerCase()];
+  const resolvedQuery = alias || trimmed;
+
   // Photon (Komoot) eerst — heeft ingebouwde tolerantie voor kleine
   // spel-/spatiefouten. Nominatim als terugval als Photon niets vindt.
   try {
-    const r = await fetch(`https://photon.komoot.io/api/?limit=1&lang=nl&q=${encodeURIComponent(query)}`);
+    const r = await fetch(`https://photon.komoot.io/api/?limit=1&lang=nl&q=${encodeURIComponent(resolvedQuery)}`);
     if (r.ok) {
       const data = await r.json();
       const feature = data.features?.[0];
@@ -2023,7 +2032,7 @@ async function geocodeAddress(query) {
   }
 
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(resolvedQuery)}`);
     if (r.ok) {
       const data = await r.json();
       if (data[0]) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
@@ -2809,7 +2818,49 @@ function wireDetailModal() {
 
 /* ---------------- Instellingen ---------------- */
 
+function persistAddressAliases() {
+  localStorage.setItem("postbus:addressAliases", JSON.stringify(state.addressAliases));
+}
+
+function renderAddressAliases() {
+  const list = document.getElementById("address-aliases-list");
+  list.innerHTML = "";
+  Object.entries(state.addressAliases).forEach(([name, address]) => {
+    const li = document.createElement("li");
+    li.className = "rule-row";
+    li.innerHTML = `
+      <div class="rule-summary"><b>${escapeHtml(name)}</b> → ${escapeHtml(address)}</div>
+      <button class="btn-ghost small alias-delete-btn" style="width:auto;">✕</button>
+    `;
+    li.querySelector(".alias-delete-btn").addEventListener("click", () => {
+      delete state.addressAliases[name];
+      persistAddressAliases();
+      renderAddressAliases();
+    });
+    list.appendChild(li);
+  });
+}
+
+function wireAddressAliases() {
+  renderAddressAliases();
+  document.getElementById("alias-add-btn").addEventListener("click", () => {
+    const nameInput = document.getElementById("alias-name-input");
+    const addressInput = document.getElementById("alias-address-input");
+    const name = nameInput.value.trim();
+    const address = addressInput.value.trim();
+    if (!name || !address) { alert("Vul zowel een naam als een adres in."); return; }
+
+    state.addressAliases[name.toLowerCase()] = address;
+    persistAddressAliases();
+    renderAddressAliases();
+    nameInput.value = "";
+    addressInput.value = "";
+  });
+}
+
 function wireSettings() {
+  wireAddressAliases();
+
   const pollSelect = document.getElementById("setting-poll-interval");
   const fetchSelect = document.getElementById("setting-fetch-count");
   const categorizeToggle = document.getElementById("setting-categorize");
