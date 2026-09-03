@@ -838,7 +838,18 @@ function extractBody(payload) {
 function stripHtml(html) {
   const d = document.createElement("div");
   d.innerHTML = html;
-  return d.textContent || "";
+  // Style/script/head-blokken tellen niet als zichtbare tekst, maar
+  // .textContent pakt ze wél mee — dat is de "brontekst" (CSS/JS) die
+  // gebruikers bij HTML-mails te zien kregen. Eerst opruimen dus.
+  d.querySelectorAll("script, style, head, title, noscript").forEach(el => el.remove());
+  // Blokelementen omzetten naar regeleindes zodat de tekst leesbaar blijft
+  // in plaats van alles aan elkaar te plakken.
+  d.querySelectorAll("br").forEach(el => el.replaceWith("\n"));
+  d.querySelectorAll("p, div, tr, li, h1, h2, h3, h4, h5, h6").forEach(el => {
+    el.append("\n");
+  });
+  const text = d.textContent || "";
+  return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 let activeDetailMessage = null;
@@ -881,20 +892,26 @@ async function openDetail(message) {
 
 async function sendReply(message, bodyText) {
   const account = state.accounts.find(a => a.email === message.accountEmail);
-  if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
+  if (!account || !account.token) { alert("Dit account is niet verbonden."); return false; }
 
   if (account.provider === "microsoft") {
-    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}/reply`, {
+    const r = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}/reply`, {
       method: "POST",
       headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ comment: bodyText })
     });
-    return;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      alert("Antwoord versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
+      console.error("Reply (Microsoft) mislukt", r.status, errText);
+      return false;
+    }
+    return true;
   }
 
   const toAddress = extractEmailAddress(message.from);
   const subject = message.subject.toLowerCase().startsWith("re:") ? message.subject : `Re: ${message.subject}`;
-  await sendMail(message.accountEmail, {
+  return sendMail(message.accountEmail, {
     to: toAddress, subject, body: bodyText,
     inReplyTo: message.messageIdHeader, threadId: message.threadId
   });
@@ -902,10 +919,10 @@ async function sendReply(message, bodyText) {
 
 async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, threadId }) {
   const account = state.accounts.find(a => a.email === fromAccountEmail);
-  if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
+  if (!account || !account.token) { alert("Dit account is niet verbonden."); return false; }
 
   if (account.provider === "microsoft") {
-    await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+    const r = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
       method: "POST",
       headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -917,7 +934,13 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
         saveToSentItems: true
       })
     });
-    return;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      alert("Versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
+      console.error("sendMail (Microsoft) mislukt", r.status, errText);
+      return false;
+    }
+    return true;
   }
 
   const lines = [
@@ -935,11 +958,18 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
   const payload = { raw };
   if (threadId) payload.threadId = threadId;
 
-  await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+  const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
     headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    alert("Versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
+    console.error("sendMail mislukt", r.status, errText);
+    return false;
+  }
+  return true;
 }
 
 function extractEmailAddress(from) {
@@ -971,7 +1001,8 @@ function wireComposeModal() {
     const subject = document.getElementById("compose-subject").value.trim();
     const body = document.getElementById("compose-body").value.trim();
     if (!to || !subject) { alert("Vul minstens een ontvanger en onderwerp in."); return; }
-    await sendMail(from, { to, subject, body });
+    const ok = await sendMail(from, { to, subject, body });
+    if (!ok) return;
     document.getElementById("compose-modal").classList.add("hidden");
     if (state.activeFolder === "SENT") refreshInbox();
   });
@@ -1791,10 +1822,17 @@ function wireDetailModal() {
     if (!activeDetailMessage) return;
     const text = document.getElementById("detail-reply-text").value.trim();
     if (!text) return;
-    await sendReply(activeDetailMessage, text);
+    const btn = document.getElementById("detail-reply-send");
+    btn.disabled = true;
+    btn.textContent = "Versturen…";
+    const ok = await sendReply(activeDetailMessage, text);
+    btn.disabled = false;
+    btn.textContent = "Verstuur";
+    if (!ok) return; // fout is al gemeld via alert(); reply-tekst blijft staan zodat niets verloren gaat
     document.getElementById("detail-reply-text").value = "";
     document.getElementById("detail-reply-box").classList.add("hidden");
     modal.classList.add("hidden");
+    if (state.activeFolder === "SENT") refreshInbox();
   });
 }
 
