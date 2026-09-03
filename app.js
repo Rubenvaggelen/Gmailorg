@@ -197,6 +197,7 @@ function boot() {
   wireEventModal();
   wireSettings();
   wireRestaurants();
+  wireRoutePage();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1626,6 +1627,164 @@ function wireRoutePage() {
       (err) => { statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd."); },
       { enableHighAccuracy: false, timeout: 15000 }
     );
+  });
+}
+
+/* ---------------- Route-pagina (los, niet gekoppeld aan een afspraak) ---------------- */
+
+function wireRoutePage() {
+  const trainChip = document.getElementById("route-page-train-chip");
+  const carChip = document.getElementById("route-page-car-chip");
+  const trainPanel = document.getElementById("route-page-train-panel");
+  const carPanel = document.getElementById("route-page-car-panel");
+
+  trainChip.addEventListener("click", () => {
+    trainChip.classList.add("active");
+    carChip.classList.remove("active");
+    trainPanel.classList.remove("hidden");
+    carPanel.classList.add("hidden");
+    ensureStationsLoaded();
+  });
+  carChip.addEventListener("click", () => {
+    carChip.classList.add("active");
+    trainChip.classList.remove("active");
+    carPanel.classList.remove("hidden");
+    trainPanel.classList.add("hidden");
+  });
+
+  // Vertrek-standaard: nu, afgerond op het volgende heel uur.
+  const nowInput = document.getElementById("route-page-train-datetime");
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  nowInput.value = now.toISOString().slice(0, 16);
+
+  let lastTrainSearch = null; // { fromCode, toCode, fromName, toName }
+
+  async function runTrainSearch(overrideIso) {
+    const statusEl = document.getElementById("route-page-train-status");
+    const listEl = document.getElementById("route-page-train-results");
+    const shiftRow = document.getElementById("route-page-train-shift-row");
+    listEl.innerHTML = "";
+    shiftRow.classList.add("hidden");
+
+    if (!state.nsApiKey) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen."; return; }
+
+    await ensureStationsLoaded();
+    if (!nsStationsCache) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon de stationslijst niet ophalen — check je API-sleutel."; return; }
+
+    let fromCode, toCode, fromName, toName, dateTimeIso;
+    if (overrideIso && lastTrainSearch) {
+      ({ fromCode, toCode, fromName, toName } = lastTrainSearch);
+      dateTimeIso = overrideIso;
+    } else {
+      fromName = document.getElementById("route-page-train-from").value.trim();
+      toName = document.getElementById("route-page-train-to").value.trim();
+      if (!fromName || !toName) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul zowel een vertrek- als aankomststation in."; return; }
+      fromCode = findStationCode(fromName);
+      toCode = findStationCode(toName);
+      if (!fromCode || !toCode) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon een van de stations niet herkennen — kies een station uit de lijst."; return; }
+      const dtVal = document.getElementById("route-page-train-datetime").value;
+      dateTimeIso = dtVal ? new Date(dtVal).toISOString() : new Date().toISOString();
+      lastTrainSearch = { fromCode, toCode, fromName, toName };
+    }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Zoeken...";
+
+    try {
+      const trips = await fetchNsTripsRaw(fromCode, toCode, dateTimeIso);
+      if (trips.length === 0) { statusEl.textContent = "Geen reizen gevonden."; return; }
+      statusEl.classList.add("hidden");
+      shiftRow.classList.remove("hidden");
+
+      const firstTrip = trips[0];
+      const lastTrip = trips[trips.length - 1];
+      const firstDep = firstTrip?.legs?.[0]?.origin?.actualDateTime || firstTrip?.legs?.[0]?.origin?.plannedDateTime;
+      const lastDep = lastTrip?.legs?.[0]?.origin?.actualDateTime || lastTrip?.legs?.[0]?.origin?.plannedDateTime;
+
+      trips.slice(0, 10).forEach(trip => {
+        const firstLeg = trip.legs?.[0];
+        const lastLeg = trip.legs?.[trip.legs.length - 1];
+        const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+        const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+        const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const transfers = Math.max((trip.legs?.length || 1) - 1, 0);
+        const platform = firstLeg?.origin?.actualTrack || firstLeg?.origin?.plannedTrack || "?";
+        const delayed = trip.status && trip.status !== "NORMAL";
+
+        const li = document.createElement("li");
+        li.className = "restaurant-row";
+        li.innerHTML = `
+          <div class="restaurant-top">
+            <span class="restaurant-name">${depFmt} → ${arrFmt}</span>
+            <span class="restaurant-distance">spoor ${escapeHtml(String(platform))}</span>
+          </div>
+          <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`}</div>
+          ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Verstoring/vertraging gemeld</div>` : ""}
+        `;
+        listEl.appendChild(li);
+      });
+
+      document.getElementById("route-page-train-earlier-btn").onclick = () => {
+        if (!firstDep) return;
+        runTrainSearch(new Date(new Date(firstDep).getTime() - 60 * 60 * 1000).toISOString());
+      };
+      document.getElementById("route-page-train-later-btn").onclick = () => {
+        if (!lastDep) return;
+        runTrainSearch(new Date(new Date(lastDep).getTime() + 60 * 60 * 1000).toISOString());
+      };
+    } catch (e) {
+      console.error("Treinreis zoeken mislukt", e);
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = "Zoeken mislukt — check je API-sleutel of probeer het later opnieuw.";
+    }
+  }
+
+  document.getElementById("route-page-train-search-btn").addEventListener("click", () => runTrainSearch());
+
+  document.getElementById("route-page-car-search-btn").addEventListener("click", async () => {
+    const statusEl = document.getElementById("route-page-car-status");
+    const listEl = document.getElementById("route-page-car-results");
+    listEl.innerHTML = "";
+
+    const fromAddress = document.getElementById("route-page-car-from").value.trim();
+    const destination = document.getElementById("route-page-car-to").value.trim();
+    if (!destination) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul een bestemming in."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = fromAddress ? "Vertrekadres zoeken..." : "Je locatie wordt opgevraagd...";
+
+    try {
+      const origin = await resolveOrigin(fromAddress);
+      statusEl.textContent = "Bestemming zoeken...";
+      const geoResult = await geocodeAddress(destination);
+      if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+
+      statusEl.textContent = "Reistijd berekenen...";
+      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${geoResult.lon},${geoResult.lat}?overview=false`);
+      const routeData = await routeR.json();
+      const route = routeData.routes?.[0];
+      if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
+
+      const minutes = Math.round(route.duration / 60);
+      const km = (route.distance / 1000).toFixed(1);
+
+      statusEl.classList.add("hidden");
+      const li = document.createElement("li");
+      li.className = "restaurant-row";
+      li.innerHTML = `
+        <div class="restaurant-top">
+          <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
+          <span class="restaurant-distance">${minutes} min</span>
+        </div>
+        <div class="restaurant-cuisine">${km} km</div>
+      `;
+      listEl.appendChild(li);
+    } catch (e) {
+      console.error("Autoroute berekenen mislukt", e);
+      statusEl.textContent = e.message || "Berekenen mislukt.";
+    }
   });
 }
 
