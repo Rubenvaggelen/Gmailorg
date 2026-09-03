@@ -34,16 +34,22 @@
 <div id="app" class="screen hidden">
 
   <header class="tower">
-    <div class="tower-title">
-      <span class="tower-mark"><img src="logo-mark.png" alt="Gmail Org" /></span>
-      <div>
-        <h1>Gmail Org</h1>
-        <p id="tower-subline" class="tower-subline">0 accounts verbonden</p>
+    <div class="tower-top-row">
+      <div class="tower-title">
+        <span class="tower-mark"><img src="logo-mark.png" alt="Gmail Org" /></span>
+        <div>
+          <h1>Gmail Org</h1>
+          <p id="tower-subline" class="tower-subline">0 accounts verbonden</p>
+        </div>
+      </div>
+      <div class="tower-actions">
+        <button id="compose-btn" class="btn-primary small">Opstellen</button>
+        <button id="add-account-btn" class="btn-ghost">+ Account</button>
       </div>
     </div>
-    <div class="tower-actions">
-      <button id="compose-btn" class="btn-primary small">Opstellen</button>
-      <button id="add-account-btn" class="btn-ghost">+ Account</button>
+    <div class="tower-nav-row">
+      <button class="tab tab-top active" data-view="inbox">Inbox</button>
+      <button class="tab tab-top" data-view="calendar">Kalender</button>
     </div>
   </header>
 
@@ -268,14 +274,6 @@
   </div>
 
   <nav class="tabbar">
-    <button class="tab active" data-view="inbox">
-      <span class="tab-dot"></span>
-      Inbox
-    </button>
-    <button class="tab" data-view="calendar">
-      <span class="tab-dot"></span>
-      Kalender
-    </button>
     <button class="tab" data-view="archive">
       <span class="tab-dot"></span>
       Archief
