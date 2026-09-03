@@ -92,6 +92,7 @@ const state = {
   clientId: "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
   msClientId: localStorage.getItem("postbus:msClientId") || "",
   nsApiKey: localStorage.getItem("postbus:nsApiKey") || "",
+  fixedOrigin: localStorage.getItem("postbus:fixedOrigin") || "",
   accounts: JSON.parse(localStorage.getItem("postbus:accounts") || "[]"),
   rules: JSON.parse(localStorage.getItem("postbus:rules") || "[]"),
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("postbus:settings") || "{}") },
@@ -1979,11 +1980,20 @@ function normalizeWebsiteUrl(url) {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
+let fixedOriginCoordsCache = null;
+
 async function resolveOrigin(fromAddress) {
   if (fromAddress && fromAddress.trim()) {
     const geo = await geocodeAddress(fromAddress.trim());
     if (!geo) throw new Error("Kon het vertrekadres niet vinden.");
     return { latitude: geo.lat, longitude: geo.lon };
+  }
+  if (state.fixedOrigin) {
+    if (fixedOriginCoordsCache) return fixedOriginCoordsCache;
+    const geo = await geocodeAddress(state.fixedOrigin);
+    if (!geo) throw new Error("Kon het vaste vertrekadres (bij Instellingen) niet vinden.");
+    fixedOriginCoordsCache = { latitude: geo.lat, longitude: geo.lon };
+    return fixedOriginCoordsCache;
   }
   return new Promise((resolve, reject) => {
     if (!("geolocation" in navigator)) { reject(new Error("Locatie niet beschikbaar in deze browser.")); return; }
@@ -2302,7 +2312,18 @@ let lastAdviceCoords = null;
 let lastAdviceComputeTime = 0;
 
 function getUserPositionOnce() {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    if (state.fixedOrigin) {
+      try {
+        if (!fixedOriginCoordsCache) {
+          const geo = await geocodeAddress(state.fixedOrigin);
+          if (!geo) { reject(new Error("Kon het vaste vertrekadres niet vinden.")); return; }
+          fixedOriginCoordsCache = { latitude: geo.lat, longitude: geo.lon };
+        }
+        resolve(fixedOriginCoordsCache);
+      } catch (e) { reject(e); }
+      return;
+    }
     if (cachedUserPosition) { resolve(cachedUserPosition); return; }
     if (!("geolocation" in navigator)) { reject(new Error("Geen locatie beschikbaar")); return; }
     navigator.geolocation.getCurrentPosition(
@@ -2314,6 +2335,7 @@ function getUserPositionOnce() {
 }
 
 function startLiveLocationWatch() {
+  if (state.fixedOrigin) return; // vast adres ingesteld — geen GPS nodig
   if (liveLocationWatchId !== null || !("geolocation" in navigator)) return;
   liveLocationWatchId = navigator.geolocation.watchPosition(
     (position) => {
@@ -2809,6 +2831,14 @@ function wireSettings() {
     state.nsApiKey = nsApiKeyInput.value.trim();
     localStorage.setItem("postbus:nsApiKey", state.nsApiKey);
     nsStationsCache = null; // opnieuw ophalen met de nieuwe sleutel
+  });
+
+  const fixedOriginInput = document.getElementById("setting-fixed-origin");
+  fixedOriginInput.value = state.fixedOrigin;
+  fixedOriginInput.addEventListener("change", () => {
+    state.fixedOrigin = fixedOriginInput.value.trim();
+    localStorage.setItem("postbus:fixedOrigin", state.fixedOrigin);
+    fixedOriginCoordsCache = null; // opnieuw geocoderen met het nieuwe adres
   });
 
   pollSelect.value = String(state.settings.pollIntervalMinutes);
