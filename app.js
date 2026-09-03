@@ -1509,14 +1509,115 @@ function renderCalendarSubtabs() {
 /* ---------------- Route-pagina (los, niet gekoppeld aan een afspraak) ---------------- */
 
 function wireRoutePage() {
-  document.getElementById("route-page-train-btn").addEventListener("click", () => {
-    window.open("https://www.ns.nl/reisplanner", "_blank");
+  const trainChip = document.getElementById("route-page-train-chip");
+  const carChip = document.getElementById("route-page-car-chip");
+  const trainPanel = document.getElementById("route-page-train-panel");
+  const carPanel = document.getElementById("route-page-car-panel");
+
+  trainChip.addEventListener("click", () => {
+    trainChip.classList.add("active");
+    carChip.classList.remove("active");
+    trainPanel.classList.remove("hidden");
+    carPanel.classList.add("hidden");
+    ensureStationsLoaded();
+  });
+  carChip.addEventListener("click", () => {
+    carChip.classList.add("active");
+    trainChip.classList.remove("active");
+    carPanel.classList.remove("hidden");
+    trainPanel.classList.add("hidden");
   });
 
-  const carChip = document.getElementById("route-page-car-chip");
-  const carPanel = document.getElementById("route-page-car-panel");
-  carChip.classList.add("active");
-  carPanel.classList.remove("hidden");
+  // Vertrek-standaard: nu, afgerond op het volgende heel uur.
+  const nowInput = document.getElementById("route-page-train-datetime");
+  const now0 = new Date();
+  now0.setMinutes(now0.getMinutes() - now0.getTimezoneOffset());
+  nowInput.value = now0.toISOString().slice(0, 16);
+
+  let lastTrainSearch = null; // { fromCode, toCode }
+
+  async function runTrainSearch(overrideIso) {
+    const statusEl = document.getElementById("route-page-train-status");
+    const listEl = document.getElementById("route-page-train-results");
+    const shiftRow = document.getElementById("route-page-train-shift-row");
+    listEl.innerHTML = "";
+    shiftRow.classList.add("hidden");
+
+    if (!state.nsApiKey) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen."; return; }
+
+    await ensureStationsLoaded();
+    if (!nsStationsCache) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon de stationslijst niet ophalen — check je API-sleutel."; return; }
+
+    let fromCode, toCode, dateTimeIso;
+    if (overrideIso && lastTrainSearch) {
+      ({ fromCode, toCode } = lastTrainSearch);
+      dateTimeIso = overrideIso;
+    } else {
+      const fromName = document.getElementById("route-page-train-from").value.trim();
+      const toName = document.getElementById("route-page-train-to").value.trim();
+      if (!fromName || !toName) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul zowel een vertrek- als aankomststation in."; return; }
+      fromCode = findStationCode(fromName);
+      toCode = findStationCode(toName);
+      if (!fromCode || !toCode) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon een van de stations niet herkennen — kies een station uit de lijst."; return; }
+      const dtVal = document.getElementById("route-page-train-datetime").value;
+      dateTimeIso = dtVal ? new Date(dtVal).toISOString() : new Date().toISOString();
+      lastTrainSearch = { fromCode, toCode };
+    }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Zoeken...";
+
+    try {
+      const trips = await fetchNsTripsRaw(fromCode, toCode, dateTimeIso);
+      if (trips.length === 0) { statusEl.textContent = "Geen reizen gevonden."; return; }
+      statusEl.classList.add("hidden");
+      shiftRow.classList.remove("hidden");
+
+      const firstTrip = trips[0];
+      const lastTrip = trips[trips.length - 1];
+      const firstDep = firstTrip?.legs?.[0]?.origin?.actualDateTime || firstTrip?.legs?.[0]?.origin?.plannedDateTime;
+      const lastDep = lastTrip?.legs?.[0]?.origin?.actualDateTime || lastTrip?.legs?.[0]?.origin?.plannedDateTime;
+
+      trips.slice(0, 10).forEach(trip => {
+        const firstLeg = trip.legs?.[0];
+        const lastLeg = trip.legs?.[trip.legs.length - 1];
+        const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+        const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+        const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+        const transfers = Math.max((trip.legs?.length || 1) - 1, 0);
+        const platform = firstLeg?.origin?.actualTrack || firstLeg?.origin?.plannedTrack || "?";
+        const delayed = trip.status && trip.status !== "NORMAL";
+
+        const li = document.createElement("li");
+        li.className = "restaurant-row";
+        li.innerHTML = `
+          <div class="restaurant-top">
+            <span class="restaurant-name">${depFmt} → ${arrFmt}</span>
+            <span class="restaurant-distance">spoor ${escapeHtml(String(platform))}</span>
+          </div>
+          <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`}</div>
+          ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Verstoring/vertraging gemeld</div>` : ""}
+        `;
+        listEl.appendChild(li);
+      });
+
+      document.getElementById("route-page-train-earlier-btn").onclick = () => {
+        if (!firstDep) return;
+        runTrainSearch(new Date(new Date(firstDep).getTime() - 60 * 60 * 1000).toISOString());
+      };
+      document.getElementById("route-page-train-later-btn").onclick = () => {
+        if (!lastDep) return;
+        runTrainSearch(new Date(new Date(lastDep).getTime() + 60 * 60 * 1000).toISOString());
+      };
+    } catch (e) {
+      console.error("Treinreis zoeken mislukt", e);
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = "Zoeken mislukt — check je API-sleutel of probeer het later opnieuw.";
+    }
+  }
+
+  document.getElementById("route-page-train-search-btn").addEventListener("click", () => runTrainSearch());
 
   document.getElementById("route-page-car-search-btn").addEventListener("click", async () => {
     const statusEl = document.getElementById("route-page-car-status");
