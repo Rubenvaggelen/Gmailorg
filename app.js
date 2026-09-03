@@ -1525,11 +1525,10 @@ function wireRoutePage() {
         const { latitude, longitude } = position.coords;
         statusEl.textContent = "Bestemming zoeken...";
         try {
-          const geo = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`);
-          const geoData = await geo.json();
-          if (!geoData[0]) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
-          const destLat = parseFloat(geoData[0].lat);
-          const destLon = parseFloat(geoData[0].lon);
+          const geoResult = await geocodeAddress(destination);
+          if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+          const destLat = geoResult.lat;
+          const destLon = geoResult.lon;
 
           statusEl.textContent = "Reistijd berekenen...";
           const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`);
@@ -1975,6 +1974,36 @@ function normalizeWebsiteUrl(url) {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
+async function geocodeAddress(query) {
+  // Photon (Komoot) eerst — heeft ingebouwde tolerantie voor kleine
+  // spel-/spatiefouten. Nominatim als terugval als Photon niets vindt.
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?limit=1&lang=nl&q=${encodeURIComponent(query)}`);
+    if (r.ok) {
+      const data = await r.json();
+      const feature = data.features?.[0];
+      if (feature?.geometry?.coordinates) {
+        const [lon, lat] = feature.geometry.coordinates;
+        return { lat, lon };
+      }
+    }
+  } catch (e) {
+    console.error("Photon-geocodering mislukt", e);
+  }
+
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`);
+    if (r.ok) {
+      const data = await r.json();
+      if (data[0]) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+    }
+  } catch (e) {
+    console.error("Nominatim-geocodering mislukt", e);
+  }
+
+  return null;
+}
+
 function haversineDistanceMeters(lat1, lon1, lat2, lon2) {  const R = 6371000;
   const toRad = (d) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
@@ -2282,11 +2311,10 @@ async function updateTravelAdvice() {
     const coords = await getUserPositionOnce();
     const { latitude, longitude } = coords;
 
-    const geo = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`);
-    const geoData = await geo.json();
-    if (!geoData[0]) { box.innerHTML = "Kon de locatie van de afspraak niet herkennen als adres — reisadvies niet mogelijk."; return; }
-    const destLat = parseFloat(geoData[0].lat);
-    const destLon = parseFloat(geoData[0].lon);
+    const geoResult = await geocodeAddress(destination);
+    if (!geoResult) { box.innerHTML = "Kon de locatie van de afspraak niet herkennen als adres — reisadvies niet mogelijk."; return; }
+    const destLat = geoResult.lat;
+    const destLon = geoResult.lon;
 
     const lines = [];
 
@@ -2520,13 +2548,10 @@ function wireEventRoutePanel() {
         const { latitude, longitude } = position.coords;
         statusEl.textContent = "Bestemming zoeken...";
         try {
-          const geo = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`
-          );
-          const geoData = await geo.json();
-          if (!geoData[0]) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
-          const destLat = parseFloat(geoData[0].lat);
-          const destLon = parseFloat(geoData[0].lon);
+          const geoResult = await geocodeAddress(destination);
+          if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+          const destLat = geoResult.lat;
+          const destLon = geoResult.lon;
 
           statusEl.textContent = "Reistijd berekenen...";
           const routeR = await fetch(
