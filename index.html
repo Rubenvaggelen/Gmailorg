@@ -52,6 +52,7 @@
     <section id="view-inbox" class="view">
       <div class="search-row">
         <input id="search-input" type="search" placeholder="Zoek op afzender, onderwerp of tekst&hellip;" />
+        <button id="select-mode-btn" class="btn-ghost small">Selecteren</button>
       </div>
       <div class="filter-row filter-row-folders" id="folder-chips"></div>
       <div class="filter-row" id="account-chips"></div>
@@ -256,6 +257,15 @@
     </section>
 
   </main>
+
+  <div id="selection-bar" class="selection-bar hidden">
+    <span id="selection-count">0 geselecteerd</span>
+    <div class="selection-actions">
+      <button id="selection-archive-btn" class="btn-ghost small">Archiveren</button>
+      <button id="selection-trash-btn" class="btn-ghost small danger">Verwijderen</button>
+      <button id="selection-cancel-btn" class="btn-ghost small">Annuleren</button>
+    </div>
+  </div>
 
   <nav class="tabbar">
     <button class="tab active" data-view="inbox">
