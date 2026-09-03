@@ -199,6 +199,7 @@ function boot() {
   wireRestaurants();
   wireRoutePage();
   wireRouteMapModal();
+  wireTrainTripDetailModal();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1641,6 +1642,65 @@ function stopNavigation() {
   document.getElementById("route-nav-stop-btn").classList.add("hidden");
 }
 
+function showTrainTripDetail(trip) {
+  const modal = document.getElementById("train-trip-detail-modal");
+  const body = document.getElementById("train-trip-detail-body");
+  const titleEl = document.getElementById("train-trip-detail-title");
+
+  const legs = trip.legs || [];
+  const firstLeg = legs[0];
+  const lastLeg = legs[legs.length - 1];
+  const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+  const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+  const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+  const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+  titleEl.textContent = `${depFmt} → ${arrFmt}`;
+
+  const totalMinutes = trip.actualDurationInMinutes || trip.plannedDurationInMinutes;
+  const transfers = Math.max(legs.length - 1, 0);
+
+  let html = `
+    <p class="settings-hint">
+      Totale reistijd: ${totalMinutes ? totalMinutes + " min" : "onbekend"} ·
+      ${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`}
+    </p>
+  `;
+
+  legs.forEach((leg, i) => {
+    const legDepTime = leg.origin?.actualDateTime || leg.origin?.plannedDateTime;
+    const legArrTime = leg.destination?.actualDateTime || leg.destination?.plannedDateTime;
+    const legDepFmt = legDepTime ? new Date(legDepTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+    const legArrFmt = legArrTime ? new Date(legArrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+    const depPlatform = leg.origin?.actualTrack || leg.origin?.plannedTrack || "?";
+    const arrPlatform = leg.destination?.actualTrack || leg.destination?.plannedTrack || "?";
+    const trainType = leg.product?.longCategoryName || leg.product?.categoryCode || "Trein";
+    const direction = leg.direction || leg.destination?.name || "";
+    const cancelled = leg.cancelled;
+    const legMessages = (leg.messages || []).map(m => m.message || m.text).filter(Boolean);
+
+    html += `
+      <div class="settings-group" style="margin-bottom:10px;">
+        <h3 style="margin-bottom:6px;">${i + 1}. ${escapeHtml(trainType)}${direction ? " richting " + escapeHtml(direction) : ""}</h3>
+        <div class="event-meta">
+          <b>${legDepFmt}</b> ${escapeHtml(leg.origin?.name || "?")} (spoor ${escapeHtml(String(depPlatform))})
+          → <b>${legArrFmt}</b> ${escapeHtml(leg.destination?.name || "?")} (spoor ${escapeHtml(String(arrPlatform))})
+        </div>
+        ${cancelled ? `<div class="restaurant-hours" style="color:#D68080;">Deze rit is uitgevallen</div>` : ""}
+        ${legMessages.map(m => `<div class="restaurant-hours" style="color:#D68080;">${escapeHtml(m)}</div>`).join("")}
+      </div>
+    `;
+  });
+
+  body.innerHTML = html;
+  modal.classList.remove("hidden");
+}
+
+function wireTrainTripDetailModal() {
+  document.getElementById("train-trip-detail-close").addEventListener("click", () => {
+    document.getElementById("train-trip-detail-modal").classList.add("hidden");
+  });
+}
+
 function wireRouteMapModal() {
   document.getElementById("route-map-close").addEventListener("click", () => {
     document.getElementById("route-map-modal").classList.add("hidden");
@@ -1733,6 +1793,7 @@ function wireRoutePage() {
 
         const li = document.createElement("li");
         li.className = "restaurant-row";
+        li.style.cursor = "pointer";
         li.innerHTML = `
           <div class="restaurant-top">
             <span class="restaurant-name">${depFmt} → ${arrFmt}</span>
@@ -1741,6 +1802,7 @@ function wireRoutePage() {
           <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`}</div>
           ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Verstoring/vertraging gemeld</div>` : ""}
         `;
+        li.addEventListener("click", () => showTrainTripDetail(trip));
         listEl.appendChild(li);
       });
 
