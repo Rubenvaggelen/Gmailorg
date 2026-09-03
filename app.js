@@ -1518,37 +1518,46 @@ let navCurrentStepIndex = 0;
 let navDestination = null;
 
 function showRouteOnMap(origin, destination, geojsonGeometry, destinationLabel, steps) {
-  const modal = document.getElementById("route-map-modal");
-  const titleEl = document.getElementById("route-map-title");
-  titleEl.textContent = `Route naar ${destinationLabel}`;
-  modal.classList.remove("hidden");
-  document.getElementById("route-nav-banner").classList.add("hidden");
-  document.getElementById("route-nav-start-btn").classList.remove("hidden");
-  document.getElementById("route-nav-stop-btn").classList.add("hidden");
-  stopNavigation();
+  try {
+    const modal = document.getElementById("route-map-modal");
+    const titleEl = document.getElementById("route-map-title");
+    titleEl.textContent = `Route naar ${destinationLabel}`;
+    modal.classList.remove("hidden");
+    document.getElementById("route-nav-banner").classList.add("hidden");
+    document.getElementById("route-nav-start-btn").classList.remove("hidden");
+    document.getElementById("route-nav-stop-btn").classList.add("hidden");
+    stopNavigation();
 
-  navSteps = steps || [];
-  navDestination = destination;
+    navSteps = steps || [];
+    navDestination = destination;
 
-  // Leaflet heeft een zichtbare container nodig om de juiste afmetingen te
-  // kunnen bepalen — even wachten tot na het tonen van de modal.
-  setTimeout(() => {
-    const container = document.getElementById("route-map-container");
-    if (routeLeafletMap) { routeLeafletMap.remove(); routeLeafletMap = null; }
-    container.innerHTML = "";
+    // Leaflet heeft een zichtbare container nodig om de juiste afmetingen te
+    // kunnen bepalen — even wachten tot na het tonen van de modal.
+    setTimeout(() => {
+      try {
+        const container = document.getElementById("route-map-container");
+        if (typeof L === "undefined") { alert("DEBUG: Leaflet (L) is niet geladen — waarschijnlijk geblokkeerd door netwerk/firewall."); return; }
+        if (routeLeafletMap) { routeLeafletMap.remove(); routeLeafletMap = null; }
+        container.innerHTML = "";
 
-    routeLeafletMap = L.map(container);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap-bijdragers",
-      maxZoom: 19
-    }).addTo(routeLeafletMap);
+        routeLeafletMap = L.map(container);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap-bijdragers",
+          maxZoom: 19
+        }).addTo(routeLeafletMap);
 
-    const routeLine = L.geoJSON(geojsonGeometry, { style: { color: "#E0A030", weight: 5 } }).addTo(routeLeafletMap);
-    L.marker([origin.latitude, origin.longitude]).addTo(routeLeafletMap).bindPopup("Vertrek");
-    L.marker([destination.lat, destination.lon]).addTo(routeLeafletMap).bindPopup(destinationLabel);
+        const routeLine = L.geoJSON(geojsonGeometry, { style: { color: "#E0A030", weight: 5 } }).addTo(routeLeafletMap);
+        L.marker([origin.latitude, origin.longitude]).addTo(routeLeafletMap).bindPopup("Vertrek");
+        L.marker([destination.lat, destination.lon]).addTo(routeLeafletMap).bindPopup(destinationLabel);
 
-    routeLeafletMap.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
-  }, 50);
+        routeLeafletMap.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+      } catch (innerErr) {
+        alert("DEBUG (kaart tekenen): " + innerErr.message);
+      }
+    }, 50);
+  } catch (err) {
+    alert("DEBUG (showRouteOnMap): " + err.message);
+  }
 }
 
 function describeManeuver(step) {
@@ -1899,7 +1908,11 @@ function wireRoutePage() {
       `;
       li.querySelectorAll(".route-km-link").forEach(el => {
         el.addEventListener("click", () => {
-          showRouteOnMap(origin, { lat: geoResult.lat, lon: geoResult.lon }, route.geometry, destination, route.legs?.[0]?.steps || []);
+          try {
+            showRouteOnMap(origin, { lat: geoResult.lat, lon: geoResult.lon }, route.geometry, destination, route.legs?.[0]?.steps || []);
+          } catch (clickErr) {
+            alert("DEBUG (klik): " + clickErr.message);
+          }
         });
       });
       listEl.appendChild(li);
