@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
 const COLORS = ["#E0A458", "#6FA287", "#7B93D6", "#C97B7B", "#9C7BC9", "#6FB8B0"];
 const CATEGORY_LABELS = { personal: "Persoonlijk", newsletter: "Nieuwsbrieven", notification: "Meldingen", webshop: "Webshops" };
 const FOLDERS = { INBOX: "Postvak IN", SENT: "Verzonden", DRAFT: "Concepten", TRASH: "Prullenbak" };
-const MS_FOLDER_MAP = { INBOX: "inbox", SENT: "sentitems", DRAFT: "drafts", TRASH: "deleteditems" };
+const MS_FOLDER_MAP = { INBOX: "inbox", ARCHIVE: "archive", SENT: "sentitems", DRAFT: "drafts", TRASH: "deleteditems" };
 const MS_SCOPES = ["Mail.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite", "User.Read"];
 const RANGE_LABELS = { today: "Vandaag", week: "Deze week", month: "Deze maand" };
 const ACTION_LABELS = { archive: "Archiveren", trash: "Verwijderen", snooze1h: "Snoozen" };
@@ -153,7 +153,6 @@ function boot() {
   });
 
   renderAccounts();
-  renderReconnectBanner();
   renderChips();
   renderFolderChips();
   renderCategoryChips();
@@ -177,14 +176,6 @@ function boot() {
   document.getElementById("add-microsoft-btn").addEventListener("click", startAddMicrosoftAccount);
   document.getElementById("compose-btn").addEventListener("click", openCompose);
   document.getElementById("add-event-btn").addEventListener("click", () => openEventModal("create"));
-  document.getElementById("reconnect-banner").addEventListener("click", reconnectAllAccounts);
-  document.getElementById("inbox-empty-connect-btn").addEventListener("click", startAddAccount);
-  document.getElementById("calendar-empty-connect-btn").addEventListener("click", startAddAccount);
-
-  // Meteen data laden voor accounts die nog een geldig token hebben, in
-  // plaats van te wachten tot de eerste polling-ronde.
-  refreshInbox();
-  refreshCalendar();
 
   startPolling();
 }
@@ -193,55 +184,6 @@ function updateSubline() {
   const n = state.accounts.length;
   document.getElementById("tower-subline").textContent =
     n === 0 ? "0 accounts verbonden" : `${n} account${n > 1 ? "s" : ""} verbonden`;
-}
-
-/* ---------------- Reconnect-banner (Postvak) ---------------- */
-
-let lastReconnectCount = 0;
-
-function renderReconnectBanner() {
-  const banner = document.getElementById("reconnect-banner");
-  if (!banner) return;
-  const needsReconnect = state.accounts.filter(a => !a.token);
-
-  // Zodra er (opnieuw) een account is dat niet meer verbonden is — d.w.z.
-  // "uitgelogd" — wissen we de service-worker cache automatisch, zodat de
-  // eerstvolgende keer dat de app wordt geopend gegarandeerd de nieuwste
-  // versie wordt geladen in plaats van een verouderde, gecachete versie.
-  if (needsReconnect.length > 0 && lastReconnectCount === 0) {
-    clearAppCache();
-  }
-  lastReconnectCount = needsReconnect.length;
-
-  if (needsReconnect.length === 0) {
-    banner.classList.add("hidden");
-    return;
-  }
-  banner.classList.remove("hidden");
-  banner.querySelector(".empty-copy").textContent =
-    `Tik hier om ${needsReconnect.length} account${needsReconnect.length > 1 ? "s" : ""} opnieuw te verbinden.`;
-}
-
-function clearAppCache() {
-  if (!("caches" in window)) return;
-  caches.keys()
-    .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-    .catch((e) => console.warn("Cache wissen mislukt", e));
-
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.getRegistration().then((reg) => {
-      if (!reg) return;
-      if (reg.active) reg.active.postMessage({ type: "CLEAR_CACHE" });
-      reg.update();
-    }).catch(() => {});
-  }
-}
-
-function reconnectAllAccounts() {
-  state.accounts.filter(a => !a.token).forEach(a => {
-    if (a.provider === "microsoft") reconnectMicrosoftAccount(a.email);
-    else reconnectAccount(a.email);
-  });
 }
 
 /* ---------------- Google OAuth ---------------- */
@@ -286,7 +228,6 @@ function addOrUpdateAccount(email, token, expiresIn, provider = "google") {
   persistAccounts();
   if (provider === "google") scheduleSilentRefresh(account);
   renderAccounts();
-  renderReconnectBanner();
   renderChips();
   renderCalendarAccountChips();
   updateSubline();
@@ -392,7 +333,6 @@ function removeAccount(email) {
   state.events = state.events.filter(e => e.accountEmail !== email);
   persistAccounts();
   renderAccounts();
-  renderReconnectBanner();
   renderChips();
   renderMessages();
   renderCalendarAccountChips();
@@ -429,10 +369,12 @@ async function fetchAccountMessages(account) {
   if (account.provider === "microsoft") return fetchMicrosoftMessages(account);
   try {
     const count = state.settings.fetchCount;
-    const listResp = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}&labelIds=${state.activeFolder}`,
-      { headers: { Authorization: `Bearer ${account.token}` } }
-    );
+    // Gmail heeft geen los "Archief"-label — gearchiveerd betekent simpelweg
+    // "geen INBOX-label meer", dus dat vraag je op via een zoekopdracht.
+    const listUrl = state.activeFolder === "ARCHIVE"
+      ? `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}&q=${encodeURIComponent("-in:inbox -in:trash -in:sent -in:drafts -in:spam")}`
+      : `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}&labelIds=${state.activeFolder}`;
+    const listResp = await fetch(listUrl, { headers: { Authorization: `Bearer ${account.token}` } });
     if (!listResp.ok) return [];
     const listData = await listResp.json();
     const ids = (listData.messages || []).map(m => m.id);
@@ -838,18 +780,7 @@ function extractBody(payload) {
 function stripHtml(html) {
   const d = document.createElement("div");
   d.innerHTML = html;
-  // Style/script/head-blokken tellen niet als zichtbare tekst, maar
-  // .textContent pakt ze wél mee — dat is de "brontekst" (CSS/JS) die
-  // gebruikers bij HTML-mails te zien kregen. Eerst opruimen dus.
-  d.querySelectorAll("script, style, head, title, noscript").forEach(el => el.remove());
-  // Blokelementen omzetten naar regeleindes zodat de tekst leesbaar blijft
-  // in plaats van alles aan elkaar te plakken.
-  d.querySelectorAll("br").forEach(el => el.replaceWith("\n"));
-  d.querySelectorAll("p, div, tr, li, h1, h2, h3, h4, h5, h6").forEach(el => {
-    el.append("\n");
-  });
-  const text = d.textContent || "";
-  return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return d.textContent || "";
 }
 
 let activeDetailMessage = null;
@@ -892,26 +823,20 @@ async function openDetail(message) {
 
 async function sendReply(message, bodyText) {
   const account = state.accounts.find(a => a.email === message.accountEmail);
-  if (!account || !account.token) { alert("Dit account is niet verbonden."); return false; }
+  if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
 
   if (account.provider === "microsoft") {
-    const r = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}/reply`, {
+    await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}/reply`, {
       method: "POST",
       headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ comment: bodyText })
     });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => "");
-      alert("Antwoord versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
-      console.error("Reply (Microsoft) mislukt", r.status, errText);
-      return false;
-    }
-    return true;
+    return;
   }
 
   const toAddress = extractEmailAddress(message.from);
   const subject = message.subject.toLowerCase().startsWith("re:") ? message.subject : `Re: ${message.subject}`;
-  return sendMail(message.accountEmail, {
+  await sendMail(message.accountEmail, {
     to: toAddress, subject, body: bodyText,
     inReplyTo: message.messageIdHeader, threadId: message.threadId
   });
@@ -919,10 +844,10 @@ async function sendReply(message, bodyText) {
 
 async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, threadId }) {
   const account = state.accounts.find(a => a.email === fromAccountEmail);
-  if (!account || !account.token) { alert("Dit account is niet verbonden."); return false; }
+  if (!account || !account.token) { alert("Dit account is niet verbonden."); return; }
 
   if (account.provider === "microsoft") {
-    const r = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+    await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
       method: "POST",
       headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -934,13 +859,7 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
         saveToSentItems: true
       })
     });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => "");
-      alert("Versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
-      console.error("sendMail (Microsoft) mislukt", r.status, errText);
-      return false;
-    }
-    return true;
+    return;
   }
 
   const lines = [
@@ -958,18 +877,11 @@ async function sendMail(fromAccountEmail, { to, subject, body, inReplyTo, thread
   const payload = { raw };
   if (threadId) payload.threadId = threadId;
 
-  const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+  await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
     headers: { Authorization: `Bearer ${account.token}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  if (!r.ok) {
-    const errText = await r.text().catch(() => "");
-    alert("Versturen is mislukt. Probeer het opnieuw of verbind het account opnieuw.");
-    console.error("sendMail mislukt", r.status, errText);
-    return false;
-  }
-  return true;
 }
 
 function extractEmailAddress(from) {
@@ -1001,8 +913,7 @@ function wireComposeModal() {
     const subject = document.getElementById("compose-subject").value.trim();
     const body = document.getElementById("compose-body").value.trim();
     if (!to || !subject) { alert("Vul minstens een ontvanger en onderwerp in."); return; }
-    const ok = await sendMail(from, { to, subject, body });
-    if (!ok) return;
+    await sendMail(from, { to, subject, body });
     document.getElementById("compose-modal").classList.add("hidden");
     if (state.activeFolder === "SENT") refreshInbox();
   });
@@ -1736,7 +1647,29 @@ function wireNav() {
       const view = tab.dataset.view;
       state.activeView = view;
       document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
-      document.getElementById(`view-${view}`).classList.remove("hidden");
+
+      if (view === "archive") {
+        // "Archief" is geen aparte weergave — het is de Postvak IN-weergave
+        // met de map ARCHIVE geselecteerd (Gmail heeft geen los archiefvak,
+        // "gearchiveerd" betekent daar simpelweg "geen INBOX-label meer").
+        document.getElementById("view-inbox").classList.remove("hidden");
+        state.activeFolder = "ARCHIVE";
+        state.messages = [];
+        renderFolderChips();
+        renderMessages();
+        refreshInbox();
+      } else if (view === "inbox") {
+        document.getElementById("view-inbox").classList.remove("hidden");
+        if (state.activeFolder === "ARCHIVE") {
+          state.activeFolder = "INBOX";
+          state.messages = [];
+          renderFolderChips();
+          renderMessages();
+          refreshInbox();
+        }
+      } else {
+        document.getElementById(`view-${view}`).classList.remove("hidden");
+      }
     });
   });
 }
@@ -1822,17 +1755,10 @@ function wireDetailModal() {
     if (!activeDetailMessage) return;
     const text = document.getElementById("detail-reply-text").value.trim();
     if (!text) return;
-    const btn = document.getElementById("detail-reply-send");
-    btn.disabled = true;
-    btn.textContent = "Versturen…";
-    const ok = await sendReply(activeDetailMessage, text);
-    btn.disabled = false;
-    btn.textContent = "Verstuur";
-    if (!ok) return; // fout is al gemeld via alert(); reply-tekst blijft staan zodat niets verloren gaat
+    await sendReply(activeDetailMessage, text);
     document.getElementById("detail-reply-text").value = "";
     document.getElementById("detail-reply-box").classList.add("hidden");
     modal.classList.add("hidden");
-    if (state.activeFolder === "SENT") refreshInbox();
   });
 }
 
@@ -1898,7 +1824,6 @@ function wireSettings() {
   document.getElementById("reset-app-btn").addEventListener("click", () => {
     if (!confirm("Weet je zeker dat je alles wilt wissen? Dit verwijdert je accounts, regels en instellingen uit deze browser.")) return;
     localStorage.clear();
-    clearAppCache();
     location.reload();
   });
 
