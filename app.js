@@ -198,6 +198,7 @@ function boot() {
   wireSettings();
   wireRestaurants();
   wireRoutePage();
+  wireRouteMapModal();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1508,6 +1509,147 @@ function renderCalendarSubtabs() {
 
 /* ---------------- Route-pagina (los, niet gekoppeld aan een afspraak) ---------------- */
 
+let routeLeafletMap = null;
+let navUserMarker = null;
+let navWatchId = null;
+let navSteps = [];
+let navCurrentStepIndex = 0;
+let navDestination = null;
+
+function showRouteOnMap(origin, destination, geojsonGeometry, destinationLabel, steps) {
+  const modal = document.getElementById("route-map-modal");
+  const titleEl = document.getElementById("route-map-title");
+  titleEl.textContent = `Route naar ${destinationLabel}`;
+  modal.classList.remove("hidden");
+  document.getElementById("route-nav-banner").classList.add("hidden");
+  document.getElementById("route-nav-start-btn").classList.remove("hidden");
+  document.getElementById("route-nav-stop-btn").classList.add("hidden");
+  stopNavigation();
+
+  navSteps = steps || [];
+  navDestination = destination;
+
+  // Leaflet heeft een zichtbare container nodig om de juiste afmetingen te
+  // kunnen bepalen — even wachten tot na het tonen van de modal.
+  setTimeout(() => {
+    const container = document.getElementById("route-map-container");
+    if (routeLeafletMap) { routeLeafletMap.remove(); routeLeafletMap = null; }
+    container.innerHTML = "";
+
+    routeLeafletMap = L.map(container);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap-bijdragers",
+      maxZoom: 19
+    }).addTo(routeLeafletMap);
+
+    const routeLine = L.geoJSON(geojsonGeometry, { style: { color: "#E0A030", weight: 5 } }).addTo(routeLeafletMap);
+    L.marker([origin.latitude, origin.longitude]).addTo(routeLeafletMap).bindPopup("Vertrek");
+    L.marker([destination.lat, destination.lon]).addTo(routeLeafletMap).bindPopup(destinationLabel);
+
+    routeLeafletMap.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+  }, 50);
+}
+
+function describeManeuver(step) {
+  const type = step.maneuver?.type;
+  const modifier = step.maneuver?.modifier;
+  const streetName = step.name || "";
+
+  const modifierNl = {
+    "uturn": "keer om",
+    "sharp right": "sla scherp rechtsaf",
+    "right": "sla rechtsaf",
+    "slight right": "houd rechts aan",
+    "straight": "ga rechtdoor",
+    "slight left": "houd links aan",
+    "left": "sla linksaf",
+    "sharp left": "sla scherp linksaf"
+  };
+
+  if (type === "depart") return "Vertrek" + (streetName ? ` via ${streetName}` : "");
+  if (type === "arrive") return "Je bent aangekomen bij je bestemming";
+  if (type === "roundabout" || type === "rotary") {
+    const exit = step.maneuver?.exit;
+    return `Neem op de rotonde de ${exit || ""}e afslag` + (streetName ? ` naar ${streetName}` : "");
+  }
+  const base = modifierNl[modifier] || "ga verder";
+  return base.charAt(0).toUpperCase() + base.slice(1) + (streetName ? ` naar ${streetName}` : "");
+}
+
+function updateNavBanner() {
+  const instructionEl = document.getElementById("route-nav-instruction");
+  const distanceEl = document.getElementById("route-nav-distance");
+  const step = navSteps[navCurrentStepIndex];
+  if (!step) return;
+  instructionEl.textContent = describeManeuver(step);
+  const distKm = step.distance ? (step.distance / 1000).toFixed(1) : null;
+  distanceEl.textContent = distKm ? `over ${distKm} km` : "";
+}
+
+function startNavigation() {
+  if (!navSteps.length || !("geolocation" in navigator)) return;
+
+  document.getElementById("route-nav-banner").classList.remove("hidden");
+  document.getElementById("route-nav-start-btn").classList.add("hidden");
+  document.getElementById("route-nav-stop-btn").classList.remove("hidden");
+  navCurrentStepIndex = 0;
+  updateNavBanner();
+
+  navWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      const { latitude, longitude } = position.coords;
+
+      if (!navUserMarker) {
+        navUserMarker = L.circleMarker([latitude, longitude], { radius: 8, color: "#4C9AFF", fillColor: "#4C9AFF", fillOpacity: 0.9 }).addTo(routeLeafletMap);
+      } else {
+        navUserMarker.setLatLng([latitude, longitude]);
+      }
+      routeLeafletMap.setView([latitude, longitude], 16);
+
+      // Volgende stap? Kijk of we dicht genoeg bij het eindpunt van de
+      // huidige stap zijn.
+      const currentStep = navSteps[navCurrentStepIndex];
+      if (currentStep?.maneuver?.location) {
+        const [stepLon, stepLat] = currentStep.maneuver.location;
+        const distance = haversineDistanceMeters(latitude, longitude, stepLat, stepLon);
+        if (distance < 40 && navCurrentStepIndex < navSteps.length - 1) {
+          navCurrentStepIndex++;
+          updateNavBanner();
+        }
+      }
+
+      if (navDestination) {
+        const distToDest = haversineDistanceMeters(latitude, longitude, navDestination.lat, navDestination.lon);
+        if (distToDest < 40) {
+          document.getElementById("route-nav-instruction").textContent = "Je bent aangekomen bij je bestemming";
+          document.getElementById("route-nav-distance").textContent = "";
+          stopNavigation();
+        }
+      }
+    },
+    (err) => console.error("Navigatie volgen mislukt", err),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+  );
+}
+
+function stopNavigation() {
+  if (navWatchId !== null) {
+    navigator.geolocation.clearWatch(navWatchId);
+    navWatchId = null;
+  }
+  document.getElementById("route-nav-start-btn").classList.remove("hidden");
+  document.getElementById("route-nav-stop-btn").classList.add("hidden");
+}
+
+function wireRouteMapModal() {
+  document.getElementById("route-map-close").addEventListener("click", () => {
+    document.getElementById("route-map-modal").classList.add("hidden");
+    stopNavigation();
+  });
+  document.getElementById("route-nav-start-btn").addEventListener("click", startNavigation);
+  document.getElementById("route-nav-stop-btn").addEventListener("click", stopNavigation);
+}
+
 function wireRoutePage() {
   const trainChip = document.getElementById("route-page-train-chip");
   const carChip = document.getElementById("route-page-car-chip");
@@ -1638,7 +1780,7 @@ function wireRoutePage() {
       if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
 
       statusEl.textContent = "Reistijd berekenen...";
-      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${geoResult.lon},${geoResult.lat}?overview=false`);
+      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${geoResult.lon},${geoResult.lat}?overview=full&geometries=geojson&steps=true`);
       const routeData = await routeR.json();
       const route = routeData.routes?.[0];
       if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
@@ -1652,10 +1794,15 @@ function wireRoutePage() {
       li.innerHTML = `
         <div class="restaurant-top">
           <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
-          <span class="restaurant-distance">${minutes} min</span>
+          <span class="restaurant-distance route-km-link" style="text-decoration:underline; cursor:pointer;">${minutes} min</span>
         </div>
-        <div class="restaurant-cuisine">${km} km</div>
+        <div class="restaurant-cuisine route-km-link" style="text-decoration:underline; cursor:pointer;">${km} km</div>
       `;
+      li.querySelectorAll(".route-km-link").forEach(el => {
+        el.addEventListener("click", () => {
+          showRouteOnMap(origin, { lat: geoResult.lat, lon: geoResult.lon }, route.geometry, destination, route.legs?.[0]?.steps || []);
+        });
+      });
       listEl.appendChild(li);
     } catch (e) {
       console.error("Autoroute berekenen mislukt", e);
