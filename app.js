@@ -1550,11 +1550,18 @@ function wireRoutePage() {
       const fromName = document.getElementById("route-page-train-from").value.trim();
       const toName = document.getElementById("route-page-train-to").value.trim();
       if (!fromName || !toName) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul zowel een vertrek- als aankomststation in."; return; }
-      fromCode = findStationCode(fromName);
-      toCode = findStationCode(toName);
-      if (!fromCode || !toCode) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon een van de stations niet herkennen — kies een station uit de lijst."; return; }
+      statusEl.classList.remove("hidden");
+      statusEl.textContent = "Stations herkennen...";
+      const fromResolved = await resolveStationCode(fromName);
+      const toResolved = await resolveStationCode(toName);
+      if (!fromResolved || !toResolved) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon een van de twee niet herkennen als station of adres."; return; }
+      fromCode = fromResolved.code;
+      toCode = toResolved.code;
       dateTimeIso = new Date().toISOString();
       lastTrainSearch = { fromCode, toCode };
+      if (fromResolved.viaAddress || toResolved.viaAddress) {
+        statusEl.textContent = `Dichtstbijzijnd station: ${fromResolved.viaAddress || fromName} → ${toResolved.viaAddress || toName}`;
+      }
     }
 
     statusEl.classList.remove("hidden");
@@ -1702,6 +1709,18 @@ function findNearestStation(lat, lon) {
   return withCoords
     .map(s => ({ ...s, distance: haversineDistanceMeters(lat, lon, s.lat, s.lon) }))
     .sort((a, b) => a.distance - b.distance)[0];
+}
+
+async function resolveStationCode(nameOrAddress) {
+  const direct = findStationCode(nameOrAddress);
+  if (direct) return { code: direct };
+  // Geen stationsnaam herkend — probeer het als adres en zoek het
+  // dichtstbijzijnde station.
+  const geo = await geocodeAddress(nameOrAddress);
+  if (!geo) return null;
+  const nearest = findNearestStation(geo.lat, geo.lon);
+  if (!nearest) return null;
+  return { code: nearest.code, viaAddress: nearest.name };
 }
 
 function wireTrainPanel() {
@@ -2541,12 +2560,15 @@ function wireEventRoutePanel() {
     if (!fromName || !toName) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul zowel Van als Naar in."; return; }
 
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Zoeken...";
+    statusEl.textContent = "Stations herkennen...";
 
     await ensureStationsLoaded();
-    const fromCode = findStationCode(fromName);
-    const toCode = findStationCode(toName);
-    if (!fromCode || !toCode) { statusEl.textContent = "Kon een van de stations niet herkennen."; return; }
+    const fromResolved = await resolveStationCode(fromName);
+    const toResolved = await resolveStationCode(toName);
+    if (!fromResolved || !toResolved) { statusEl.textContent = "Kon een van de twee niet herkennen als station of adres."; return; }
+    const fromCode = fromResolved.code;
+    const toCode = toResolved.code;
+    statusEl.textContent = "Zoeken...";
 
     // Gebruik de starttijd van de afspraak als vertrekmoment.
     const eventStart = document.getElementById("event-start").value;
