@@ -1528,12 +1528,6 @@ function wireRoutePage() {
     trainPanel.classList.add("hidden");
   });
 
-  // Vertrek-standaard: nu, afgerond op het volgende heel uur.
-  const nowInput = document.getElementById("route-page-train-datetime");
-  const now0 = new Date();
-  now0.setMinutes(now0.getMinutes() - now0.getTimezoneOffset());
-  nowInput.value = now0.toISOString().slice(0, 16);
-
   let lastTrainSearch = null; // { fromCode, toCode }
 
   async function runTrainSearch(overrideIso) {
@@ -1559,8 +1553,7 @@ function wireRoutePage() {
       fromCode = findStationCode(fromName);
       toCode = findStationCode(toName);
       if (!fromCode || !toCode) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon een van de stations niet herkennen — kies een station uit de lijst."; return; }
-      const dtVal = document.getElementById("route-page-train-datetime").value;
-      dateTimeIso = dtVal ? new Date(dtVal).toISOString() : new Date().toISOString();
+      dateTimeIso = new Date().toISOString();
       lastTrainSearch = { fromCode, toCode };
     }
 
