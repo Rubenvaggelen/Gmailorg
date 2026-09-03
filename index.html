@@ -50,6 +50,7 @@
     <div class="tower-nav-row">
       <button class="tab tab-top active" data-view="inbox">Inbox</button>
       <button class="tab tab-top" data-view="calendar">Kalender</button>
+      <button class="tab tab-top" data-view="route">Route</button>
     </div>
   </header>
 
@@ -128,6 +129,52 @@
       </div>
 
       <datalist id="train-stations-list"></datalist>
+    </section>
+
+    <section id="view-route" class="view hidden">
+      <div class="section-head">
+        <h2>Route</h2>
+      </div>
+      <div class="filter-row">
+        <button id="route-page-train-chip" class="chip active">Trein</button>
+        <button id="route-page-car-chip" class="chip">Auto</button>
+      </div>
+
+      <div id="route-page-train-panel">
+        <label class="field">
+          <span>Van</span>
+          <input id="route-page-train-from" type="text" list="train-stations-list" placeholder="Bijv. Amsterdam Centraal" />
+        </label>
+        <label class="field">
+          <span>Naar</span>
+          <input id="route-page-train-to" type="text" list="train-stations-list" placeholder="Bijv. Utrecht Centraal" />
+        </label>
+        <label class="field">
+          <span>Vertrek rond</span>
+          <input id="route-page-train-datetime" type="datetime-local" />
+        </label>
+        <button id="route-page-train-search-btn" class="btn-primary small">Zoek reisopties</button>
+        <div id="route-page-train-shift-row" class="hidden" style="display:flex; gap:8px; margin-top:8px;">
+          <button id="route-page-train-earlier-btn" class="btn-ghost small" style="width:auto;">◀ Eerder</button>
+          <button id="route-page-train-later-btn" class="btn-ghost small" style="width:auto;">Later ▶</button>
+        </div>
+        <p id="route-page-train-status" class="settings-hint hidden" style="margin-top:10px;"></p>
+        <ul id="route-page-train-results" class="restaurant-list" style="margin-top:12px;"></ul>
+      </div>
+
+      <div id="route-page-car-panel" class="hidden">
+        <label class="field">
+          <span>Van (leeg = mijn huidige locatie / vaste vertrekadres)</span>
+          <input id="route-page-car-from" type="text" placeholder="Bijv. Dam 1, Amsterdam (of leeg laten)" />
+        </label>
+        <label class="field">
+          <span>Naar (adres of plaatsnaam)</span>
+          <input id="route-page-car-to" type="text" placeholder="Bijv. Kalverstraat 1, Amsterdam" />
+        </label>
+        <button id="route-page-car-search-btn" class="btn-primary small">Bereken reistijd</button>
+        <p id="route-page-car-status" class="settings-hint hidden" style="margin-top:10px;"></p>
+        <ul id="route-page-car-results" class="restaurant-list" style="margin-top:12px;"></ul>
+      </div>
     </section>
 
     <section id="view-settings" class="view hidden">
