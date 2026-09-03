@@ -50,6 +50,7 @@
     <div class="tower-nav-row">
       <button class="tab tab-top active" data-view="inbox">Inbox</button>
       <button class="tab tab-top" data-view="calendar">Kalender</button>
+      <button class="tab tab-top" data-view="route">Route</button>
     </div>
   </header>
 
@@ -173,6 +174,36 @@
           <p class="empty-copy">Tik op "Zoek bij mij in de buurt" om haltes dichtbij te vinden.</p>
         </div>
         <ul id="ov-list" class="restaurant-list"></ul>
+      </div>
+    </section>
+
+    <section id="view-route" class="view hidden">
+      <div class="section-head">
+        <h2>Route</h2>
+      </div>
+      <div class="filter-row">
+        <button id="route-page-car-chip" class="chip active">Auto</button>
+        <button id="route-page-ov-chip" class="chip">OV (bus/tram)</button>
+      </div>
+
+      <div id="route-page-car-panel">
+        <label class="field">
+          <span>Naar (adres of plaatsnaam)</span>
+          <input id="route-page-car-to" type="text" placeholder="Bijv. Kalverstraat 1, Amsterdam" />
+        </label>
+        <button id="route-page-car-search-btn" class="btn-primary small">Bereken reistijd</button>
+        <p id="route-page-car-status" class="settings-hint hidden" style="margin-top:10px;"></p>
+        <ul id="route-page-car-results" class="restaurant-list" style="margin-top:12px;"></ul>
+      </div>
+
+      <div id="route-page-ov-panel" class="hidden">
+        <p class="settings-hint">
+          Live vertrektijden van bus, tram en metro bij de dichtstbijzijnde
+          haltes (geen automatische overstap-planning van A naar B).
+        </p>
+        <button id="route-page-ov-search-btn" class="btn-primary small">Zoek bij mij in de buurt</button>
+        <p id="route-page-ov-status" class="settings-hint hidden" style="margin-top:10px;"></p>
+        <ul id="route-page-ov-results" class="restaurant-list" style="margin-top:12px;"></ul>
       </div>
     </section>
 
@@ -470,6 +501,9 @@
       <span>Locatie (optioneel)</span>
       <input id="event-location" type="text" placeholder="Bijv. Kantoor / Zoom-link" />
     </label>
+
+    <div id="event-travel-advice" class="hidden settings-hint" style="background:var(--surface); border-radius:var(--radius-card); padding:12px; margin-bottom:16px;">
+    </div>
     <label class="field">
       <span>Beschrijving (optioneel)</span>
       <textarea id="event-description" rows="3" placeholder="Details&hellip;"></textarea>
