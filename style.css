@@ -629,6 +629,7 @@ main {
   display: flex;
   align-items: flex-end;
   z-index: 20;
+  overscroll-behavior: contain;
 }
 
 .modal-card {
@@ -638,6 +639,7 @@ main {
   padding: 22px 20px calc(20px + env(safe-area-inset-bottom));
   max-height: 88vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .modal-card h2 { font-size: 19px; margin-bottom: 16px; }
