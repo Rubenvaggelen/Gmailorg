@@ -888,3 +888,31 @@ main {
   border-color: #6B3B3B;
   color: #D68080;
 }
+
+/* ---------- Eigen autocomplete-lijst (i.p.v. onbetrouwbare <datalist>) ---------- */
+
+.autocomplete-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+
+.autocomplete-item {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.active {
+  background: var(--amber-dim);
+}
