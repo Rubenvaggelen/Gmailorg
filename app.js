@@ -1710,7 +1710,44 @@ function wireRouteMapModal() {
   document.getElementById("route-nav-stop-btn").addEventListener("click", stopNavigation);
 }
 
+function wireStationAutocomplete(inputId, suggestionsId) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(suggestionsId);
+
+  input.addEventListener("input", async () => {
+    const query = input.value.trim().toLowerCase();
+    if (query.length < 2) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+
+    await ensureStationsLoaded();
+    if (!nsStationsCache) { box.classList.add("hidden"); return; }
+
+    const matches = nsStationsCache
+      .filter(s => s.name.toLowerCase().includes(query))
+      .slice(0, 8);
+
+    if (matches.length === 0) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+
+    box.innerHTML = matches.map(s => `<div class="autocomplete-item">${escapeHtml(s.name)}</div>`).join("");
+    box.classList.remove("hidden");
+    box.querySelectorAll(".autocomplete-item").forEach((el, i) => {
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // voorkomt dat het invoerveld eerst de focus (en het blur-event) verliest
+        input.value = matches[i].name;
+        box.classList.add("hidden");
+        box.innerHTML = "";
+      });
+    });
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => box.classList.add("hidden"), 150);
+  });
+}
+
 function wireRoutePage() {
+  wireStationAutocomplete("route-page-train-from", "route-page-train-from-suggestions");
+  wireStationAutocomplete("route-page-train-to", "route-page-train-to-suggestions");
+
   const trainChip = document.getElementById("route-page-train-chip");
   const carChip = document.getElementById("route-page-car-chip");
   const trainPanel = document.getElementById("route-page-train-panel");
