@@ -176,6 +176,7 @@ function boot() {
   wireRestaurants();
   wireTrainPanel();
   wireOvPanel();
+  wireRoutePage();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1486,6 +1487,138 @@ function renderCalendarSubtabs() {
   });
 }
 
+/* ---------------- Route-pagina (los, niet gekoppeld aan een afspraak) ---------------- */
+
+function wireRoutePage() {
+  const carChip = document.getElementById("route-page-car-chip");
+  const ovChip = document.getElementById("route-page-ov-chip");
+  const carPanel = document.getElementById("route-page-car-panel");
+  const ovPanel = document.getElementById("route-page-ov-panel");
+
+  carChip.addEventListener("click", () => {
+    carChip.classList.add("active");
+    ovChip.classList.remove("active");
+    carPanel.classList.remove("hidden");
+    ovPanel.classList.add("hidden");
+  });
+  ovChip.addEventListener("click", () => {
+    ovChip.classList.add("active");
+    carChip.classList.remove("active");
+    ovPanel.classList.remove("hidden");
+    carPanel.classList.add("hidden");
+  });
+
+  document.getElementById("route-page-car-search-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("route-page-car-status");
+    const listEl = document.getElementById("route-page-car-results");
+    listEl.innerHTML = "";
+
+    const destination = document.getElementById("route-page-car-to").value.trim();
+    if (!destination) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul een bestemming in."; return; }
+    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Je locatie wordt opgevraagd...";
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        statusEl.textContent = "Bestemming zoeken...";
+        try {
+          const geo = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`);
+          const geoData = await geo.json();
+          if (!geoData[0]) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+          const destLat = parseFloat(geoData[0].lat);
+          const destLon = parseFloat(geoData[0].lon);
+
+          statusEl.textContent = "Reistijd berekenen...";
+          const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`);
+          const routeData = await routeR.json();
+          const route = routeData.routes?.[0];
+          if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
+
+          const minutes = Math.round(route.duration / 60);
+          const km = (route.distance / 1000).toFixed(1);
+
+          statusEl.classList.add("hidden");
+          const li = document.createElement("li");
+          li.className = "restaurant-row";
+          li.innerHTML = `
+            <div class="restaurant-top">
+              <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
+              <span class="restaurant-distance">${minutes} min</span>
+            </div>
+            <div class="restaurant-cuisine">${km} km</div>
+          `;
+          listEl.appendChild(li);
+        } catch (e) {
+          console.error("Autoroute berekenen mislukt", e);
+          statusEl.textContent = "Berekenen mislukt.";
+        }
+      },
+      (err) => { statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd."); },
+      { enableHighAccuracy: false, timeout: 15000 }
+    );
+  });
+
+  document.getElementById("route-page-ov-search-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("route-page-ov-status");
+    const listEl = document.getElementById("route-page-ov-results");
+    listEl.innerHTML = "";
+
+    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Je locatie wordt opgevraagd...";
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        statusEl.textContent = "Haltes zoeken...";
+        await ensureOvStopsLoaded();
+        if (!ovStopsCache) { statusEl.textContent = "Kon de haltelijst niet ophalen."; return; }
+
+        const nearest = ovStopsCache
+          .map(s => ({ ...s, distance: haversineDistanceMeters(latitude, longitude, s.lat, s.lon) }))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 4);
+
+        statusEl.textContent = "Vertrektijden ophalen...";
+        const perStop = await Promise.all(nearest.map(async (stop) => ({ stop, passes: await fetchOvDepartures(stop.code) })));
+
+        statusEl.classList.add("hidden");
+        let any = false;
+        perStop.forEach(({ stop, passes }) => {
+          if (passes.length === 0) return;
+          const heading = document.createElement("li");
+          heading.className = "event-day-heading";
+          const distanceLabel = stop.distance < 1000 ? `${Math.round(stop.distance)} m` : `${(stop.distance / 1000).toFixed(1)} km`;
+          heading.textContent = `${stop.name}${stop.town ? " · " + stop.town : ""} (${distanceLabel})`;
+          listEl.appendChild(heading);
+
+          passes.forEach(p => {
+            any = true;
+            const time = p.ExpectedDepartureTime || p.TargetDepartureTime;
+            const timeFmt = time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+            const li = document.createElement("li");
+            li.className = "restaurant-row";
+            li.innerHTML = `
+              <div class="restaurant-top">
+                <span class="restaurant-name">${escapeHtml(p.LinePublicNumber || "")} → ${escapeHtml(p.DestinationName50 || "?")}</span>
+                <span class="restaurant-distance">${timeFmt}</span>
+              </div>
+            `;
+            listEl.appendChild(li);
+          });
+        });
+        if (!any) { statusEl.classList.remove("hidden"); statusEl.textContent = "Geen vertrektijden gevonden."; }
+      },
+      (err) => { statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd."); },
+      { enableHighAccuracy: false, timeout: 15000 }
+    );
+  });
+}
+
 function wireRestaurants() {
   document.getElementById("find-restaurants-btn").addEventListener("click", findNearbyRestaurants);
 }
@@ -1504,7 +1637,9 @@ async function ensureStationsLoaded() {
     const data = await r.json();
     nsStationsCache = (data.payload || []).map(s => ({
       name: s.namen?.lang || s.namen?.middel || s.code,
-      code: s.code
+      code: s.code,
+      lat: s.lat,
+      lon: s.lng
     }));
     const listEl = document.getElementById("train-stations-list");
     listEl.innerHTML = nsStationsCache.map(s => `<option value="${escapeHtml(s.name)}"></option>`).join("");
@@ -1520,6 +1655,15 @@ function findStationCode(name) {
   if (exact) return exact.code;
   const partial = nsStationsCache.find(s => s.name.toLowerCase().includes(lower));
   return partial ? partial.code : null;
+}
+
+function findNearestStation(lat, lon) {
+  if (!nsStationsCache) return null;
+  const withCoords = nsStationsCache.filter(s => s.lat && s.lon);
+  if (withCoords.length === 0) return null;
+  return withCoords
+    .map(s => ({ ...s, distance: haversineDistanceMeters(lat, lon, s.lat, s.lon) }))
+    .sort((a, b) => a.distance - b.distance)[0];
 }
 
 function wireTrainPanel() {
@@ -2044,7 +2188,12 @@ function openEventModal(mode, ev, prefill) {
     document.getElementById("event-guests").value = "";
   }
 
+  document.getElementById("event-travel-advice").classList.add("hidden");
   document.getElementById("event-modal").classList.remove("hidden");
+  if (document.getElementById("event-start").value && document.getElementById("event-location").value.trim()) {
+    clearTimeout(travelAdviceTimer);
+    travelAdviceTimer = setTimeout(updateTravelAdvice, 400);
+  }
 }
 
 function wireEventModal() {
@@ -2083,6 +2232,124 @@ function wireEventModal() {
   });
 
   wireEventRoutePanel();
+  wireTravelAdvice();
+}
+
+/* ---------------- Automatisch reisadvies (auto + trein) ---------------- */
+
+let cachedUserPosition = null;
+let travelAdviceTimer = null;
+
+function getUserPositionOnce() {
+  return new Promise((resolve, reject) => {
+    if (cachedUserPosition) { resolve(cachedUserPosition); return; }
+    if (!("geolocation" in navigator)) { reject(new Error("Geen locatie beschikbaar")); return; }
+    navigator.geolocation.getCurrentPosition(
+      (position) => { cachedUserPosition = position.coords; resolve(cachedUserPosition); },
+      (err) => reject(err),
+      { enableHighAccuracy: false, timeout: 15000 }
+    );
+  });
+}
+
+function wireTravelAdvice() {
+  const startInput = document.getElementById("event-start");
+  const locationInput = document.getElementById("event-location");
+
+  const trigger = () => {
+    clearTimeout(travelAdviceTimer);
+    travelAdviceTimer = setTimeout(updateTravelAdvice, 700);
+  };
+  startInput.addEventListener("change", trigger);
+  locationInput.addEventListener("change", trigger);
+  locationInput.addEventListener("blur", trigger);
+}
+
+async function updateTravelAdvice() {
+  const box = document.getElementById("event-travel-advice");
+  const startVal = document.getElementById("event-start").value;
+  const destination = document.getElementById("event-location").value.trim();
+
+  if (!startVal || !destination) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+
+  const eventStart = new Date(startVal);
+  if (isNaN(eventStart.getTime())) { box.classList.add("hidden"); return; }
+
+  box.classList.remove("hidden");
+  box.innerHTML = "Reisadvies wordt berekend...";
+
+  try {
+    const coords = await getUserPositionOnce();
+    const { latitude, longitude } = coords;
+
+    const geo = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`);
+    const geoData = await geo.json();
+    if (!geoData[0]) { box.innerHTML = "Kon de locatie van de afspraak niet herkennen als adres — reisadvies niet mogelijk."; return; }
+    const destLat = parseFloat(geoData[0].lat);
+    const destLon = parseFloat(geoData[0].lon);
+
+    const lines = [];
+
+    // --- Auto ---
+    try {
+      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`);
+      const routeData = await routeR.json();
+      const route = routeData.routes?.[0];
+      if (route) {
+        const minutes = Math.round(route.duration / 60);
+        const departBy = new Date(eventStart.getTime() - route.duration * 1000);
+        const departFmt = departBy.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+        lines.push(`🚗 <b>Auto</b>: vertrek uiterlijk ${departFmt} (${minutes} min rijden) om op tijd te zijn.`);
+      }
+    } catch (e) { console.error("Autoadvies mislukt", e); }
+
+    // --- Trein ---
+    if (state.nsApiKey) {
+      try {
+        await ensureStationsLoaded();
+        const fromStation = findNearestStation(latitude, longitude);
+        const toStation = findNearestStation(destLat, destLon);
+        if (fromStation && toStation && fromStation.code !== toStation.code) {
+          const params = new URLSearchParams({
+            fromStation: fromStation.code,
+            toStation: toStation.code,
+            dateTime: eventStart.toISOString(),
+            searchForArrival: "true"
+          });
+          const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
+            headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
+          });
+          if (r.ok) {
+            const data = await r.json();
+            const best = (data.trips || [])[data.trips.length - 1];
+            if (best) {
+              const firstLeg = best.legs?.[0];
+              const lastLeg = best.legs?.[best.legs.length - 1];
+              const depTime = firstLeg?.origin?.actualDateTime || firstLeg?.origin?.plannedDateTime;
+              const arrTime = lastLeg?.destination?.actualDateTime || lastLeg?.destination?.plannedDateTime;
+              const depFmt = depTime ? new Date(depTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+              const arrFmt = arrTime ? new Date(arrTime).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
+              const transfers = Math.max((best.legs?.length || 1) - 1, 0);
+              lines.push(`🚆 <b>Trein</b>: ${fromStation.name} ${depFmt} → ${toStation.name} ${arrFmt}${transfers > 0 ? ` (${transfers} overstap${transfers > 1 ? "pen" : ""})` : " (rechtstreeks)"}.`);
+            } else {
+              lines.push(`🚆 <b>Trein</b>: geen passende reis gevonden.`);
+            }
+          }
+        } else if (fromStation && toStation) {
+          lines.push(`🚆 <b>Trein</b>: dichtstbijzijnde station is al hetzelfde als bij de bestemming.`);
+        }
+      } catch (e) { console.error("Treinadvies mislukt", e); }
+    } else {
+      lines.push(`🚆 <b>Trein</b>: vul een NS API-sleutel in bij Instellingen om dit advies te zien.`);
+    }
+
+    box.innerHTML = lines.length
+      ? lines.map(l => `<div style="margin-bottom:6px;">${l}</div>`).join("")
+      : "Geen reisadvies beschikbaar.";
+  } catch (e) {
+    console.error("Reisadvies mislukt", e);
+    box.innerHTML = "Kon geen reisadvies berekenen (locatietoegang nodig).";
+  }
 }
 
 function wireEventRoutePanel() {
