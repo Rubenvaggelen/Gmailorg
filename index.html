@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css" />
 </head>
 <body>
 
@@ -590,6 +591,30 @@
   </div>
 </div>
 
+<div id="route-map-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="detail-head">
+      <div>
+        <div class="detail-subject" id="route-map-title">Route</div>
+      </div>
+      <button id="route-map-close" class="btn-ghost small">Sluiten</button>
+    </div>
+
+    <div id="route-nav-banner" class="hidden" style="background:var(--amber-dim); border:1px solid var(--amber); border-radius:var(--radius-card); padding:12px; margin-top:10px;">
+      <div id="route-nav-instruction" style="font-weight:700; font-size:16px;"></div>
+      <div id="route-nav-distance" class="settings-hint" style="margin-top:2px;"></div>
+    </div>
+
+    <div id="route-map-container" style="width:100%; height:55vh; border-radius:var(--radius-card); overflow:hidden; margin-top:10px;"></div>
+
+    <div class="modal-actions">
+      <button id="route-nav-start-btn" class="btn-primary">Start navigatie</button>
+      <button id="route-nav-stop-btn" class="btn-ghost hidden">Stop navigatie</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js"></script>
 <script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js" async defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js"></script>
