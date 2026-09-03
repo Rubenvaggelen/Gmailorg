@@ -142,13 +142,15 @@
       </div>
 
       <div id="route-page-train-panel">
-        <label class="field">
+        <label class="field" style="position:relative;">
           <span>Van</span>
-          <input id="route-page-train-from" type="text" list="train-stations-list" placeholder="Bijv. Amsterdam Centraal" />
+          <input id="route-page-train-from" type="text" autocomplete="off" placeholder="Bijv. Amsterdam Centraal" />
+          <div id="route-page-train-from-suggestions" class="autocomplete-list hidden"></div>
         </label>
-        <label class="field">
+        <label class="field" style="position:relative;">
           <span>Naar</span>
-          <input id="route-page-train-to" type="text" list="train-stations-list" placeholder="Bijv. Utrecht Centraal" />
+          <input id="route-page-train-to" type="text" autocomplete="off" placeholder="Bijv. Utrecht Centraal" />
+          <div id="route-page-train-to-suggestions" class="autocomplete-list hidden"></div>
         </label>
         <button id="route-page-train-search-btn" class="btn-primary small">Zoek reisopties</button>
         <div id="route-page-train-shift-row" class="hidden" style="display:flex; gap:8px; margin-top:8px;">
