@@ -1666,7 +1666,7 @@ function renderTrainTrips(trips) {
           start: toLocalInputValue(new Date(depTime).getTime()),
           end: toLocalInputValue(new Date(arrTime).getTime()),
           location: toName,
-          description: `Spoor ${platform}${transfers > 0 ? ` · ${transfers} overstap${transfers > 1 ? "pen" : ""}` : ""}`
+          description: `Route: trein ${fromName ? fromName + " → " : ""}${toName}, vertrek ${depFmt}, aankomst ${arrFmt}, spoor ${platform}${transfers > 0 ? `, ${transfers} overstap${transfers > 1 ? "pen" : ""}` : ""}.`
         });
       });
     }
@@ -2089,6 +2089,7 @@ function wireEventRoutePanel() {
   const panel = document.getElementById("event-route-panel");
   const trainForm = document.getElementById("event-route-train-form");
   const ovForm = document.getElementById("event-route-ov-form");
+  const carForm = document.getElementById("event-route-car-form");
 
   document.getElementById("event-route-toggle").addEventListener("click", () => {
     panel.classList.toggle("hidden");
@@ -2097,10 +2098,17 @@ function wireEventRoutePanel() {
   document.getElementById("event-route-train-btn").addEventListener("click", () => {
     trainForm.classList.remove("hidden");
     ovForm.classList.add("hidden");
+    carForm.classList.add("hidden");
   });
   document.getElementById("event-route-ov-btn").addEventListener("click", () => {
     ovForm.classList.remove("hidden");
     trainForm.classList.add("hidden");
+    carForm.classList.add("hidden");
+  });
+  document.getElementById("event-route-car-btn").addEventListener("click", () => {
+    carForm.classList.remove("hidden");
+    trainForm.classList.add("hidden");
+    ovForm.classList.add("hidden");
   });
 
   document.getElementById("event-route-train-search-btn").addEventListener("click", async () => {
@@ -2219,6 +2227,73 @@ function wireEventRoutePanel() {
           });
         });
         if (!any) { statusEl.classList.remove("hidden"); statusEl.textContent = "Geen vertrektijden gevonden."; }
+      },
+      (err) => {
+        statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
+      },
+      { enableHighAccuracy: false, timeout: 15000 }
+    );
+  });
+
+  document.getElementById("event-route-car-search-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("event-route-car-status");
+    const listEl = document.getElementById("event-route-car-results");
+    listEl.innerHTML = "";
+
+    const destination = document.getElementById("event-route-car-to").value.trim();
+    if (!destination) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul een bestemming in."; return; }
+
+    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
+
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "Je locatie wordt opgevraagd...";
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        statusEl.textContent = "Bestemming zoeken...";
+        try {
+          const geo = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(destination)}`
+          );
+          const geoData = await geo.json();
+          if (!geoData[0]) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+          const destLat = parseFloat(geoData[0].lat);
+          const destLon = parseFloat(geoData[0].lon);
+
+          statusEl.textContent = "Reistijd berekenen...";
+          const routeR = await fetch(
+            `https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`
+          );
+          const routeData = await routeR.json();
+          const route = routeData.routes?.[0];
+          if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
+
+          const minutes = Math.round(route.duration / 60);
+          const km = (route.distance / 1000).toFixed(1);
+
+          statusEl.classList.add("hidden");
+          const li = document.createElement("li");
+          li.className = "restaurant-row";
+          li.innerHTML = `
+            <div class="restaurant-top">
+              <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
+              <span class="restaurant-distance">${minutes} min</span>
+            </div>
+            <div class="restaurant-cuisine">${km} km</div>
+            <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze route</button>
+          `;
+          li.querySelector(".use-route-btn").addEventListener("click", () => {
+            const routeText = `Route: auto naar ${destination}, geschatte reistijd ${minutes} min (${km} km).`;
+            const descEl = document.getElementById("event-description");
+            descEl.value = descEl.value ? `${descEl.value}\n\n${routeText}` : routeText;
+            panel.classList.add("hidden");
+          });
+          listEl.appendChild(li);
+        } catch (e) {
+          console.error("Autoroute berekenen mislukt", e);
+          statusEl.textContent = "Berekenen mislukt.";
+        }
       },
       (err) => {
         statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
