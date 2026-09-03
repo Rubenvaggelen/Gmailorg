@@ -4,6 +4,23 @@
    opgeslagen. Tokens leven alleen in het geheugen van de sessie.
    ============================================================ */
 
+// Ruim bij het sluiten van de pagina alle cache en de service worker op,
+// zodat de volgende keer altijd de nieuwste versie wordt opgehaald —
+// nooit meer handmatig "sitegegevens wissen" nodig.
+function clearAppCacheAndServiceWorker() {
+  if ("caches" in window) {
+    caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
+  }
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
+  }
+}
+window.addEventListener("pagehide", clearAppCacheAndServiceWorker);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") clearAppCacheAndServiceWorker();
+});
+
+
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
