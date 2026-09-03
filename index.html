@@ -126,11 +126,67 @@
         </div>
         <ul id="restaurant-list" class="restaurant-list"></ul>
       </div>
+
+      <div id="train-panel" class="hidden">
+        <div class="section-head">
+          <h2>Treinreis</h2>
+        </div>
+        <label class="field">
+          <span>Van</span>
+          <input id="train-from" type="text" list="train-stations-list" placeholder="Bijv. Amsterdam Centraal" />
+        </label>
+        <label class="field">
+          <span>Naar</span>
+          <input id="train-to" type="text" list="train-stations-list" placeholder="Bijv. Utrecht Centraal" />
+        </label>
+        <datalist id="train-stations-list"></datalist>
+        <label class="field">
+          <span>Vertrek rond</span>
+          <input id="train-datetime" type="datetime-local" />
+        </label>
+        <button id="train-search-btn" class="btn-primary small">Zoek reisopties</button>
+        <p id="train-status" class="settings-hint hidden" style="margin-top:10px;"></p>
+        <div id="train-empty" class="empty-state hidden">
+          <p class="empty-title">Nog niets gezocht</p>
+          <p class="empty-copy">Vul een vertrek- en aankomststation in en tik op "Zoek reisopties".</p>
+        </div>
+        <ul id="train-trip-list" class="restaurant-list" style="margin-top:12px;"></ul>
+      </div>
+
+      <div id="ov-panel" class="hidden">
+        <div class="section-head">
+          <h2>OV in de buurt</h2>
+          <button id="find-ov-btn" class="btn-primary small">Zoek bij mij in de buurt</button>
+        </div>
+        <p class="settings-hint">
+          Live vertrektijden van bus, tram en metro bij de dichtstbijzijnde
+          haltes, via gratis data van OVapi. Geen automatische
+          overstap-planning — alleen wat er nu vertrekt.
+        </p>
+        <div id="ov-status" class="settings-hint hidden"></div>
+        <div id="ov-empty" class="empty-state hidden">
+          <p class="empty-title">Nog niets gezocht</p>
+          <p class="empty-copy">Tik op "Zoek bij mij in de buurt" om haltes dichtbij te vinden.</p>
+        </div>
+        <ul id="ov-list" class="restaurant-list"></ul>
+      </div>
     </section>
 
     <section id="view-settings" class="view hidden">
       <div class="section-head">
         <h2>Instellingen</h2>
+      </div>
+
+      <div class="settings-group">
+        <h3>Treinreis (NS)</h3>
+        <p class="settings-hint">
+          Nodig voor de "Treinreis"-optie in de Kalender-tab: een gratis
+          API-sleutel van apiportal.ns.nl.
+        </p>
+        <label class="field">
+          <span>NS API-sleutel</span>
+          <input id="setting-ns-api-key" type="text" placeholder="Plak hier je subscription key" />
+        </label>
       </div>
 
       <div class="settings-group">
