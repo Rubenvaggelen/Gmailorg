@@ -1531,10 +1531,13 @@ function wireTrainPanel() {
   document.getElementById("train-search-btn").addEventListener("click", searchTrainTrips);
 }
 
-async function searchTrainTrips() {
+let currentTrainSearchDateTime = null;
+
+async function searchTrainTrips(overrideDateTimeIso) {
   const statusEl = document.getElementById("train-status");
   const emptyEl = document.getElementById("train-empty");
   const listEl = document.getElementById("train-trip-list");
+  const shiftRow = document.getElementById("train-shift-row");
 
   if (!state.nsApiKey) {
     statusEl.classList.remove("hidden");
@@ -1551,7 +1554,7 @@ async function searchTrainTrips() {
 
   const fromName = document.getElementById("train-from").value.trim();
   const toName = document.getElementById("train-to").value.trim();
-  const dateTime = document.getElementById("train-datetime").value;
+  const dateTimeInput = document.getElementById("train-datetime").value;
   if (!fromName || !toName) {
     statusEl.classList.remove("hidden");
     statusEl.textContent = "Vul zowel een vertrek- als aankomststation in.";
@@ -1566,16 +1569,21 @@ async function searchTrainTrips() {
     return;
   }
 
+  const searchIso = overrideDateTimeIso
+    || (dateTimeInput ? new Date(dateTimeInput).toISOString() : new Date().toISOString());
+  currentTrainSearchDateTime = searchIso;
+
   statusEl.classList.remove("hidden");
   statusEl.textContent = "Zoeken...";
   emptyEl.classList.add("hidden");
   listEl.innerHTML = "";
+  shiftRow.classList.add("hidden");
 
   try {
     const params = new URLSearchParams({
       fromStation: fromCode,
       toStation: toCode,
-      dateTime: dateTime ? new Date(dateTime).toISOString() : new Date().toISOString()
+      dateTime: searchIso
     });
     const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
       headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
@@ -1596,6 +1604,7 @@ function renderTrainTrips(trips) {
   const statusEl = document.getElementById("train-status");
   const emptyEl = document.getElementById("train-empty");
   const listEl = document.getElementById("train-trip-list");
+  const shiftRow = document.getElementById("train-shift-row");
 
   listEl.innerHTML = "";
 
@@ -1609,6 +1618,12 @@ function renderTrainTrips(trips) {
 
   statusEl.classList.add("hidden");
   emptyEl.classList.add("hidden");
+  shiftRow.classList.remove("hidden");
+
+  const firstTrip = trips[0];
+  const lastTrip = trips[trips.length - 1];
+  const firstDep = firstTrip?.legs?.[0]?.origin?.actualDateTime || firstTrip?.legs?.[0]?.origin?.plannedDateTime;
+  const lastDep = lastTrip?.legs?.[0]?.origin?.actualDateTime || lastTrip?.legs?.[0]?.origin?.plannedDateTime;
 
   trips.slice(0, 10).forEach(trip => {
     const firstLeg = trip.legs?.[0];
@@ -1630,9 +1645,34 @@ function renderTrainTrips(trips) {
       </div>
       <div class="restaurant-cuisine">${transfers === 0 ? "Rechtstreeks" : `${transfers} overstap${transfers > 1 ? "pen" : ""}`} · spoor ${escapeHtml(String(platform))}</div>
       ${delayed ? `<div class="restaurant-hours" style="color:#D68080;">Verstoring/vertraging gemeld</div>` : ""}
+      <button class="btn-ghost small add-trip-to-event-btn" style="margin-top:8px; width:auto;">Toevoegen aan afspraak</button>
     `;
+    if (depTime && arrTime) {
+      li.querySelector(".add-trip-to-event-btn").addEventListener("click", () => {
+        const fromName = document.getElementById("train-from").value.trim();
+        const toName = document.getElementById("train-to").value.trim();
+        openEventModal("create", null, {
+          title: `Trein ${fromName ? fromName + " → " : ""}${toName}`.trim(),
+          start: toLocalInputValue(new Date(depTime).getTime()),
+          end: toLocalInputValue(new Date(arrTime).getTime()),
+          location: toName,
+          description: `Spoor ${platform}${transfers > 0 ? ` · ${transfers} overstap${transfers > 1 ? "pen" : ""}` : ""}`
+        });
+      });
+    }
     listEl.appendChild(li);
   });
+
+  document.getElementById("train-earlier-btn").onclick = () => {
+    if (!firstDep) return;
+    const shifted = new Date(new Date(firstDep).getTime() - 60 * 60 * 1000).toISOString();
+    searchTrainTrips(shifted);
+  };
+  document.getElementById("train-later-btn").onclick = () => {
+    if (!lastDep) return;
+    const shifted = new Date(new Date(lastDep).getTime() + 60 * 60 * 1000).toISOString();
+    searchTrainTrips(shifted);
+  };
 }
 
 /* ---------------- OV in de buurt (OVapi — bus/tram/metro) ---------------- */
@@ -1952,7 +1992,7 @@ function toLocalInputValue(timestamp) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function openEventModal(mode, ev) {
+function openEventModal(mode, ev, prefill) {
   const connected = state.accounts.filter(a => a.token);
   if (connected.length === 0) { alert("Verbind eerst een account voordat je een afspraak kunt maken."); return; }
 
@@ -1972,6 +2012,14 @@ function openEventModal(mode, ev) {
     document.getElementById("event-location").value = ev.location;
     document.getElementById("event-description").value = ev.description;
     document.getElementById("event-guests").value = (ev.attendees || []).join(", ");
+  } else if (prefill) {
+    document.getElementById("event-title").value = prefill.title || "";
+    document.getElementById("event-allday").checked = false;
+    document.getElementById("event-start").value = prefill.start || "";
+    document.getElementById("event-end").value = prefill.end || "";
+    document.getElementById("event-location").value = prefill.location || "";
+    document.getElementById("event-description").value = prefill.description || "";
+    document.getElementById("event-guests").value = "";
   } else {
     const now = new Date();
     now.setMinutes(0, 0, 0);
