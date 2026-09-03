@@ -89,6 +89,8 @@ const state = {
   activeFolder: "INBOX",
   searchQuery: "",
   activeView: "inbox",
+  selectionMode: false,
+  selectedIds: new Set(),
   webshopLabelIds: {}, // { accountEmail: gmailLabelId } — cache zodat we niet elke keer opnieuw hoeven te zoeken/aan te maken
   pollHandle: null
 };
@@ -164,6 +166,7 @@ function boot() {
 
   wireNav();
   wireSearch();
+  wireSelectionMode();
   wireRuleModal();
   wireDetailModal();
   wireComposeModal();
@@ -760,20 +763,52 @@ function decodeBase64Url(data) {
   catch (e) { try { return atob(base64); } catch (e2) { return ""; } }
 }
 
+function getPartHeader(part, name) {
+  const headers = part.headers || [];
+  const h = headers.find(x => x.name.toLowerCase() === name.toLowerCase());
+  return h ? h.value : "";
+}
+
+function decodeQuotedPrintable(str) {
+  // Zachte regeleindes (soft line breaks) weghalen.
+  const cleaned = str.replace(/=\r\n/g, "").replace(/=\n/g, "");
+  const bytes = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(cleaned.substr(i + 1, 2))) {
+      bytes.push(parseInt(cleaned.substr(i + 1, 2), 16));
+      i += 2;
+    } else {
+      bytes.push(cleaned.charCodeAt(i));
+    }
+  }
+  try {
+    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+  } catch (e) {
+    return cleaned;
+  }
+}
+
+function decodePartBody(part) {
+  const raw = decodeBase64Url(part.body?.data);
+  const encoding = getPartHeader(part, "Content-Transfer-Encoding").toLowerCase();
+  if (encoding.includes("quoted-printable")) return decodeQuotedPrintable(raw);
+  return raw;
+}
+
 function extractBody(payload) {
   if (!payload) return "";
-  if (payload.mimeType === "text/plain" && payload.body?.data) return decodeBase64Url(payload.body.data);
+  if (payload.mimeType === "text/plain" && payload.body?.data) return decodePartBody(payload);
   if (payload.parts) {
     const plain = payload.parts.find(p => p.mimeType === "text/plain");
-    if (plain && plain.body?.data) return decodeBase64Url(plain.body.data);
+    if (plain && plain.body?.data) return decodePartBody(plain);
     const html = payload.parts.find(p => p.mimeType === "text/html");
-    if (html && html.body?.data) return stripHtml(decodeBase64Url(html.body.data));
+    if (html && html.body?.data) return stripHtml(decodePartBody(html));
     for (const part of payload.parts) {
       const nested = extractBody(part);
       if (nested) return nested;
     }
   }
-  if (payload.mimeType === "text/html" && payload.body?.data) return stripHtml(decodeBase64Url(payload.body.data));
+  if (payload.mimeType === "text/html" && payload.body?.data) return stripHtml(decodePartBody(payload));
   return "";
 }
 
@@ -1176,7 +1211,7 @@ function renderMessages() {
 
   filtered.forEach(m => {
     const li = document.createElement("li");
-    li.className = "message-row";
+    li.className = "message-row" + (state.selectionMode ? " selectable" : "") + (state.selectedIds.has(m.id) ? " selected" : "");
     li.style.borderLeftColor = m.accountColor;
 
     const rightLabel = ACTION_LABELS[state.settings.swipeRight];
@@ -1189,6 +1224,7 @@ function renderMessages() {
         <span>${leftLabel}</span>
         <span>${rightLabel}</span>
       </div>
+      <div class="select-checkbox">${state.selectedIds.has(m.id) ? "✓" : ""}</div>
       <div class="message-row-inner">
         <div class="row-top">
           <span class="message-from">${escapeHtml(stripAngle(m.from))}${categoryPill}</span>
@@ -1198,10 +1234,80 @@ function renderMessages() {
         <div class="message-snippet">${escapeHtml(m.snippet)}</div>
       </div>
     `;
-    li.addEventListener("click", () => { if (li.dataset.swiping !== "1") openDetail(m); });
-    wireSwipe(li, m.id);
+    li.addEventListener("click", () => {
+      if (li.dataset.swiping === "1") return;
+      if (state.selectionMode) toggleMessageSelection(m.id);
+      else openDetail(m);
+    });
+    if (!state.selectionMode) wireSwipe(li, m.id);
     list.appendChild(li);
   });
+}
+
+function toggleMessageSelection(id) {
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+  else state.selectedIds.add(id);
+  updateSelectionBar();
+  renderMessages();
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById("selection-bar");
+  const count = state.selectedIds.size;
+  document.getElementById("selection-count").textContent = `${count} geselecteerd`;
+  bar.classList.toggle("hidden", !state.selectionMode || count === 0);
+}
+
+function wireSelectionMode() {
+  document.getElementById("select-mode-btn").addEventListener("click", () => {
+    state.selectionMode = !state.selectionMode;
+    state.selectedIds.clear();
+    document.getElementById("select-mode-btn").textContent = state.selectionMode ? "Klaar" : "Selecteren";
+    updateSelectionBar();
+    renderMessages();
+  });
+
+  document.getElementById("selection-cancel-btn").addEventListener("click", () => {
+    state.selectionMode = false;
+    state.selectedIds.clear();
+    document.getElementById("select-mode-btn").textContent = "Selecteren";
+    updateSelectionBar();
+    renderMessages();
+  });
+
+  document.getElementById("selection-archive-btn").addEventListener("click", () => runSelectionAction("archive"));
+  document.getElementById("selection-trash-btn").addEventListener("click", () => runSelectionAction("trash"));
+
+  async function runSelectionAction(action) {
+    const ids = [...state.selectedIds];
+    if (ids.length === 0) return;
+
+    // Groepeer per account, want elke Gmail/Microsoft-aanroep werkt met het
+    // token van dat specifieke account.
+    const byAccount = new Map();
+    ids.forEach(id => {
+      const account = accountForMessage(id);
+      if (!account) return;
+      if (!byAccount.has(account.email)) byAccount.set(account.email, { account, ids: [] });
+      byAccount.get(account.email).ids.push(id);
+    });
+
+    for (const { account, ids: accountIds } of byAccount.values()) {
+      try {
+        await bulkModifyMessages(account, accountIds, action);
+      } catch (e) {
+        console.error("Bulkactie mislukt voor", account.email, e);
+      }
+    }
+
+    const selectedSet = new Set(ids);
+    state.messages = state.messages.filter(m => !selectedSet.has(m.id));
+    state.selectionMode = false;
+    state.selectedIds.clear();
+    document.getElementById("select-mode-btn").textContent = "Selecteren";
+    updateSelectionBar();
+    renderMessages();
+  }
 }
 
 function runAction(action, id) {
