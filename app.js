@@ -174,9 +174,6 @@ function boot() {
   wireEventModal();
   wireSettings();
   wireRestaurants();
-  wireTrainPanel();
-  wireOvPanel();
-  wireRoutePage();
 
   document.getElementById("add-account-btn").addEventListener("click", startAddAccount);
   document.getElementById("add-account-btn-2").addEventListener("click", startAddAccount);
@@ -1469,7 +1466,7 @@ function renderRangeChips() {
 function renderCalendarSubtabs() {
   const wrap = document.getElementById("calendar-subview-chips");
   wrap.innerHTML = "";
-  const tabs = { agenda: "Agenda", restaurants: "Restaurants in de buurt", train: "Treinreis", ov: "OV in de buurt" };
+  const tabs = { agenda: "Agenda", restaurants: "Restaurants in de buurt" };
   Object.entries(tabs).forEach(([key, label]) => {
     const chip = document.createElement("button");
     chip.className = "chip" + (state.calendarSubView === key ? " active" : "");
@@ -1479,9 +1476,6 @@ function renderCalendarSubtabs() {
       renderCalendarSubtabs();
       document.getElementById("calendar-agenda-panel").classList.toggle("hidden", key !== "agenda");
       document.getElementById("restaurants-panel").classList.toggle("hidden", key !== "restaurants");
-      document.getElementById("train-panel").classList.toggle("hidden", key !== "train");
-      document.getElementById("ov-panel").classList.toggle("hidden", key !== "ov");
-      if (key === "train") ensureStationsLoaded();
     });
     wrap.appendChild(chip);
   });
