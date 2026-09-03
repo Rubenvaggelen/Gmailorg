@@ -1518,46 +1518,37 @@ let navCurrentStepIndex = 0;
 let navDestination = null;
 
 function showRouteOnMap(origin, destination, geojsonGeometry, destinationLabel, steps) {
-  try {
-    const modal = document.getElementById("route-map-modal");
-    const titleEl = document.getElementById("route-map-title");
-    titleEl.textContent = `Route naar ${destinationLabel}`;
-    modal.classList.remove("hidden");
-    document.getElementById("route-nav-banner").classList.add("hidden");
-    document.getElementById("route-nav-start-btn").classList.remove("hidden");
-    document.getElementById("route-nav-stop-btn").classList.add("hidden");
-    stopNavigation();
+  const modal = document.getElementById("route-map-modal");
+  const titleEl = document.getElementById("route-map-title");
+  titleEl.textContent = `Route naar ${destinationLabel}`;
+  modal.classList.remove("hidden");
+  document.getElementById("route-nav-banner").classList.add("hidden");
+  document.getElementById("route-nav-start-btn").classList.remove("hidden");
+  document.getElementById("route-nav-stop-btn").classList.add("hidden");
+  stopNavigation();
 
-    navSteps = steps || [];
-    navDestination = destination;
+  navSteps = steps || [];
+  navDestination = destination;
 
-    // Leaflet heeft een zichtbare container nodig om de juiste afmetingen te
-    // kunnen bepalen — even wachten tot na het tonen van de modal.
-    setTimeout(() => {
-      try {
-        const container = document.getElementById("route-map-container");
-        if (typeof L === "undefined") { alert("DEBUG: Leaflet (L) is niet geladen — waarschijnlijk geblokkeerd door netwerk/firewall."); return; }
-        if (routeLeafletMap) { routeLeafletMap.remove(); routeLeafletMap = null; }
-        container.innerHTML = "";
+  // Leaflet heeft een zichtbare container nodig om de juiste afmetingen te
+  // kunnen bepalen — even wachten tot na het tonen van de modal.
+  setTimeout(() => {
+    const container = document.getElementById("route-map-container");
+    if (routeLeafletMap) { routeLeafletMap.remove(); routeLeafletMap = null; }
+    container.innerHTML = "";
 
-        routeLeafletMap = L.map(container);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "&copy; OpenStreetMap-bijdragers",
-          maxZoom: 19
-        }).addTo(routeLeafletMap);
+    routeLeafletMap = L.map(container);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap-bijdragers",
+      maxZoom: 19
+    }).addTo(routeLeafletMap);
 
-        const routeLine = L.geoJSON(geojsonGeometry, { style: { color: "#E0A030", weight: 5 } }).addTo(routeLeafletMap);
-        L.marker([origin.latitude, origin.longitude]).addTo(routeLeafletMap).bindPopup("Vertrek");
-        L.marker([destination.lat, destination.lon]).addTo(routeLeafletMap).bindPopup(destinationLabel);
+    const routeLine = L.geoJSON(geojsonGeometry, { style: { color: "#E0A030", weight: 5 } }).addTo(routeLeafletMap);
+    L.marker([origin.latitude, origin.longitude]).addTo(routeLeafletMap).bindPopup("Vertrek");
+    L.marker([destination.lat, destination.lon]).addTo(routeLeafletMap).bindPopup(destinationLabel);
 
-        routeLeafletMap.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
-      } catch (innerErr) {
-        alert("DEBUG (kaart tekenen): " + innerErr.message);
-      }
-    }, 50);
-  } catch (err) {
-    alert("DEBUG (showRouteOnMap): " + err.message);
-  }
+    routeLeafletMap.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+  }, 50);
 }
 
 function describeManeuver(step) {
@@ -1908,11 +1899,7 @@ function wireRoutePage() {
       `;
       li.querySelectorAll(".route-km-link").forEach(el => {
         el.addEventListener("click", () => {
-          try {
-            showRouteOnMap(origin, { lat: geoResult.lat, lon: geoResult.lon }, route.geometry, destination, route.legs?.[0]?.steps || []);
-          } catch (clickErr) {
-            alert("DEBUG (klik): " + clickErr.message);
-          }
+          showRouteOnMap(origin, { lat: geoResult.lat, lon: geoResult.lon }, route.geometry, destination, route.legs?.[0]?.steps || []);
         });
       });
       listEl.appendChild(li);
@@ -2718,17 +2705,25 @@ async function updateTravelAdvice() {
     const destLon = geoResult.lon;
 
     const lines = [];
+    let carRouteForMap = null; // bewaard voor de klikbare kaart-link, na het zetten van innerHTML
 
     // --- Auto ---
     try {
-      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`);
+      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`);
       const routeData = await routeR.json();
       const route = routeData.routes?.[0];
       if (route) {
         const minutes = Math.round(route.duration / 60);
+        const km = (route.distance / 1000).toFixed(1);
         const departBy = new Date(eventStart.getTime() - route.duration * 1000);
         const departFmt = departBy.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
-        lines.push(`🚗 <b>Auto</b>: vertrek uiterlijk ${departFmt} (${minutes} min rijden) om op tijd te zijn.`);
+        lines.push(`🚗 <b>Auto</b>: vertrek uiterlijk ${departFmt} (${minutes} min rijden, <span id="advice-car-km-link" style="text-decoration:underline; cursor:pointer;">${km} km — bekijk route</span>) om op tijd te zijn.`);
+        carRouteForMap = {
+          origin: { latitude, longitude },
+          destination: { lat: destLat, lon: destLon },
+          geometry: route.geometry,
+          steps: route.legs?.[0]?.steps || []
+        };
       }
     } catch (e) { console.error("Autoadvies mislukt", e); }
 
@@ -2775,6 +2770,15 @@ async function updateTravelAdvice() {
     box.innerHTML = lines.length
       ? lines.map(l => `<div style="margin-bottom:6px;">${l}</div>`).join("")
       : "Geen reisadvies beschikbaar.";
+
+    if (carRouteForMap) {
+      const linkEl = document.getElementById("advice-car-km-link");
+      if (linkEl) {
+        linkEl.addEventListener("click", () => {
+          showRouteOnMap(carRouteForMap.origin, carRouteForMap.destination, carRouteForMap.geometry, destination, carRouteForMap.steps);
+        });
+      }
+    }
   } catch (e) {
     console.error("Reisadvies mislukt", e);
     box.innerHTML = "Kon geen reisadvies berekenen (locatietoegang nodig).";
