@@ -1508,56 +1508,50 @@ function wireRoutePage() {
     carPanel.classList.add("hidden");
   });
 
-  document.getElementById("route-page-car-search-btn").addEventListener("click", () => {
+  document.getElementById("route-page-car-search-btn").addEventListener("click", async () => {
     const statusEl = document.getElementById("route-page-car-status");
     const listEl = document.getElementById("route-page-car-results");
     listEl.innerHTML = "";
 
+    const fromAddress = document.getElementById("route-page-car-from").value.trim();
     const destination = document.getElementById("route-page-car-to").value.trim();
     if (!destination) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul een bestemming in."; return; }
-    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
 
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Je locatie wordt opgevraagd...";
+    statusEl.textContent = fromAddress ? "Vertrekadres zoeken..." : "Je locatie wordt opgevraagd...";
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        statusEl.textContent = "Bestemming zoeken...";
-        try {
-          const geoResult = await geocodeAddress(destination);
-          if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
-          const destLat = geoResult.lat;
-          const destLon = geoResult.lon;
+    try {
+      const origin = await resolveOrigin(fromAddress);
+      statusEl.textContent = "Bestemming zoeken...";
+      const geoResult = await geocodeAddress(destination);
+      if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+      const destLat = geoResult.lat;
+      const destLon = geoResult.lon;
 
-          statusEl.textContent = "Reistijd berekenen...";
-          const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`);
-          const routeData = await routeR.json();
-          const route = routeData.routes?.[0];
-          if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
+      statusEl.textContent = "Reistijd berekenen...";
+      const routeR = await fetch(`https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destLon},${destLat}?overview=false`);
+      const routeData = await routeR.json();
+      const route = routeData.routes?.[0];
+      if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
 
-          const minutes = Math.round(route.duration / 60);
-          const km = (route.distance / 1000).toFixed(1);
+      const minutes = Math.round(route.duration / 60);
+      const km = (route.distance / 1000).toFixed(1);
 
-          statusEl.classList.add("hidden");
-          const li = document.createElement("li");
-          li.className = "restaurant-row";
-          li.innerHTML = `
-            <div class="restaurant-top">
-              <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
-              <span class="restaurant-distance">${minutes} min</span>
-            </div>
-            <div class="restaurant-cuisine">${km} km</div>
-          `;
-          listEl.appendChild(li);
-        } catch (e) {
-          console.error("Autoroute berekenen mislukt", e);
-          statusEl.textContent = "Berekenen mislukt.";
-        }
-      },
-      (err) => { statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd."); },
-      { enableHighAccuracy: false, timeout: 15000 }
-    );
+      statusEl.classList.add("hidden");
+      const li = document.createElement("li");
+      li.className = "restaurant-row";
+      li.innerHTML = `
+        <div class="restaurant-top">
+          <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
+          <span class="restaurant-distance">${minutes} min</span>
+        </div>
+        <div class="restaurant-cuisine">${km} km</div>
+      `;
+      listEl.appendChild(li);
+    } catch (e) {
+      console.error("Autoroute berekenen mislukt", e);
+      statusEl.textContent = e.message || "Berekenen mislukt.";
+    }
   });
 
   document.getElementById("route-page-ov-search-btn").addEventListener("click", () => {
@@ -1974,6 +1968,22 @@ function normalizeWebsiteUrl(url) {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
+async function resolveOrigin(fromAddress) {
+  if (fromAddress && fromAddress.trim()) {
+    const geo = await geocodeAddress(fromAddress.trim());
+    if (!geo) throw new Error("Kon het vertrekadres niet vinden.");
+    return { latitude: geo.lat, longitude: geo.lon };
+  }
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) { reject(new Error("Locatie niet beschikbaar in deze browser.")); return; }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude }),
+      (err) => reject(new Error(err.message || "Kon locatie niet ophalen.")),
+      { enableHighAccuracy: false, timeout: 25000, maximumAge: 5 * 60 * 1000 }
+    );
+  });
+}
+
 async function geocodeAddress(query) {
   // Photon (Komoot) eerst — heeft ingebouwde tolerantie voor kleine
   // spel-/spatiefouten. Nominatim als terugval als Photon niets vindt.
@@ -2219,6 +2229,9 @@ function openEventModal(mode, ev, prefill) {
 
   document.getElementById("event-travel-advice").classList.add("hidden");
   document.getElementById("event-modal").classList.remove("hidden");
+  lastAdviceCoords = null;
+  lastAdviceComputeTime = 0;
+  startLiveLocationWatch();
   if (document.getElementById("event-start").value && document.getElementById("event-location").value.trim()) {
     clearTimeout(travelAdviceTimer);
     travelAdviceTimer = setTimeout(updateTravelAdvice, 400);
@@ -2227,7 +2240,10 @@ function openEventModal(mode, ev, prefill) {
 
 function wireEventModal() {
   const modal = document.getElementById("event-modal");
-  document.getElementById("event-cancel").addEventListener("click", () => modal.classList.add("hidden"));
+  document.getElementById("event-cancel").addEventListener("click", () => {
+    modal.classList.add("hidden");
+    stopLiveLocationWatch();
+  });
 
   document.getElementById("event-save").addEventListener("click", () => {
     const accountEmail = document.getElementById("event-account").value;
@@ -2251,6 +2267,7 @@ function wireEventModal() {
     if (activeEditEvent) updateEvent(accountEmail, activeEditEvent.id, data);
     else createEvent(accountEmail, data);
     modal.classList.add("hidden");
+    stopLiveLocationWatch();
   });
 
   document.getElementById("event-delete").addEventListener("click", () => {
@@ -2258,6 +2275,7 @@ function wireEventModal() {
     if (!confirm("Deze afspraak verwijderen?")) return;
     deleteEvent(activeEditEvent.accountEmail, activeEditEvent.id);
     modal.classList.add("hidden");
+    stopLiveLocationWatch();
   });
 
   wireEventRoutePanel();
@@ -2268,6 +2286,9 @@ function wireEventModal() {
 
 let cachedUserPosition = null;
 let travelAdviceTimer = null;
+let liveLocationWatchId = null;
+let lastAdviceCoords = null;
+let lastAdviceComputeTime = 0;
 
 function getUserPositionOnce() {
   return new Promise((resolve, reject) => {
@@ -2276,9 +2297,41 @@ function getUserPositionOnce() {
     navigator.geolocation.getCurrentPosition(
       (position) => { cachedUserPosition = position.coords; resolve(cachedUserPosition); },
       (err) => reject(err),
-      { enableHighAccuracy: false, timeout: 15000 }
+      { enableHighAccuracy: false, timeout: 25000, maximumAge: 5 * 60 * 1000 }
     );
   });
+}
+
+function startLiveLocationWatch() {
+  if (liveLocationWatchId !== null || !("geolocation" in navigator)) return;
+  liveLocationWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      cachedUserPosition = position.coords;
+
+      const modalOpen = !document.getElementById("event-modal").classList.contains("hidden");
+      const hasInput = document.getElementById("event-start").value && document.getElementById("event-location").value.trim();
+      if (!modalOpen || !hasInput) return;
+
+      const movedFar = !lastAdviceCoords
+        || haversineDistanceMeters(lastAdviceCoords.latitude, lastAdviceCoords.longitude, position.coords.latitude, position.coords.longitude) > 150;
+      const longEnoughAgo = Date.now() - lastAdviceComputeTime > 20000;
+
+      if (movedFar && longEnoughAgo) {
+        lastAdviceCoords = position.coords;
+        lastAdviceComputeTime = Date.now();
+        updateTravelAdvice();
+      }
+    },
+    (err) => console.error("Live locatie volgen mislukt", err),
+    { enableHighAccuracy: false, maximumAge: 60000, timeout: 25000 }
+  );
+}
+
+function stopLiveLocationWatch() {
+  if (liveLocationWatchId !== null) {
+    navigator.geolocation.clearWatch(liveLocationWatchId);
+    liveLocationWatchId = null;
+  }
 }
 
 function wireTravelAdvice() {
@@ -2530,68 +2583,59 @@ function wireEventRoutePanel() {
     );
   });
 
-  document.getElementById("event-route-car-search-btn").addEventListener("click", () => {
+  document.getElementById("event-route-car-search-btn").addEventListener("click", async () => {
     const statusEl = document.getElementById("event-route-car-status");
     const listEl = document.getElementById("event-route-car-results");
     listEl.innerHTML = "";
 
+    const fromAddress = document.getElementById("event-route-car-from").value.trim();
     const destination = document.getElementById("event-route-car-to").value.trim();
     if (!destination) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul een bestemming in."; return; }
 
-    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
-
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Je locatie wordt opgevraagd...";
+    statusEl.textContent = fromAddress ? "Vertrekadres zoeken..." : "Je locatie wordt opgevraagd...";
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        statusEl.textContent = "Bestemming zoeken...";
-        try {
-          const geoResult = await geocodeAddress(destination);
-          if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
-          const destLat = geoResult.lat;
-          const destLon = geoResult.lon;
+    try {
+      const origin = await resolveOrigin(fromAddress);
+      statusEl.textContent = "Bestemming zoeken...";
+      const geoResult = await geocodeAddress(destination);
+      if (!geoResult) { statusEl.textContent = "Kon dit adres niet vinden."; return; }
+      const destLat = geoResult.lat;
+      const destLon = geoResult.lon;
 
-          statusEl.textContent = "Reistijd berekenen...";
-          const routeR = await fetch(
-            `https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${destLon},${destLat}?overview=false`
-          );
-          const routeData = await routeR.json();
-          const route = routeData.routes?.[0];
-          if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
+      statusEl.textContent = "Reistijd berekenen...";
+      const routeR = await fetch(
+        `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destLon},${destLat}?overview=false`
+      );
+      const routeData = await routeR.json();
+      const route = routeData.routes?.[0];
+      if (!route) { statusEl.textContent = "Kon geen route berekenen."; return; }
 
-          const minutes = Math.round(route.duration / 60);
-          const km = (route.distance / 1000).toFixed(1);
+      const minutes = Math.round(route.duration / 60);
+      const km = (route.distance / 1000).toFixed(1);
 
-          statusEl.classList.add("hidden");
-          const li = document.createElement("li");
-          li.className = "restaurant-row";
-          li.innerHTML = `
-            <div class="restaurant-top">
-              <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
-              <span class="restaurant-distance">${minutes} min</span>
-            </div>
-            <div class="restaurant-cuisine">${km} km</div>
-            <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze route</button>
-          `;
-          li.querySelector(".use-route-btn").addEventListener("click", () => {
-            const routeText = `Route: auto naar ${destination}, geschatte reistijd ${minutes} min (${km} km).`;
-            const descEl = document.getElementById("event-description");
-            descEl.value = descEl.value ? `${descEl.value}\n\n${routeText}` : routeText;
-            panel.classList.add("hidden");
-          });
-          listEl.appendChild(li);
-        } catch (e) {
-          console.error("Autoroute berekenen mislukt", e);
-          statusEl.textContent = "Berekenen mislukt.";
-        }
-      },
-      (err) => {
-        statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
-      },
-      { enableHighAccuracy: false, timeout: 15000 }
-    );
+      statusEl.classList.add("hidden");
+      const li = document.createElement("li");
+      li.className = "restaurant-row";
+      li.innerHTML = `
+        <div class="restaurant-top">
+          <span class="restaurant-name">Auto naar ${escapeHtml(destination)}</span>
+          <span class="restaurant-distance">${minutes} min</span>
+        </div>
+        <div class="restaurant-cuisine">${km} km</div>
+        <button type="button" class="btn-ghost small use-route-btn" style="margin-top:6px; width:auto;">Gebruik deze route</button>
+      `;
+      li.querySelector(".use-route-btn").addEventListener("click", () => {
+        const routeText = `Route: auto naar ${destination}, geschatte reistijd ${minutes} min (${km} km).`;
+        const descEl = document.getElementById("event-description");
+        descEl.value = descEl.value ? `${descEl.value}\n\n${routeText}` : routeText;
+        panel.classList.add("hidden");
+      });
+      listEl.appendChild(li);
+    } catch (e) {
+      console.error("Autoroute berekenen mislukt", e);
+      statusEl.textContent = e.message || "Berekenen mislukt.";
+    }
   });
 }
 
