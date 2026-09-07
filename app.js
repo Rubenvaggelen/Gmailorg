@@ -78,6 +78,135 @@ function isKnownWebshopDomain(from) {
   return WEBSHOP_DOMAINS.some(d => domain === d || domain.endsWith("." + d));
 }
 
+/* ---------------- Pakket-bezorgmails -> agenda-item ---------------- */
+
+const DELIVERY_DOMAINS = [
+  "postnl.nl", "postnl.post", "dhl.com", "dhl.nl", "dhlparcel.nl",
+  "dhlecommerce.nl", "dpd.nl", "dpd.com", "ups.com", "gls-group.eu",
+  "bpost.com", "bpost.be", "fedex.com"
+];
+
+const DUTCH_MONTHS = [
+  "januari", "februari", "maart", "april", "mei", "juni",
+  "juli", "augustus", "september", "oktober", "november", "december"
+];
+
+function looksLikeDeliveryMail(message) {
+  const domain = webshopDomainFromEmail(message.from);
+  if (DELIVERY_DOMAINS.some(d => domain === d || domain.endsWith("." + d))) return true;
+  // Algemene pakketmails van afzenders die niet in de lijst staan.
+  const text = `${message.subject} ${message.snippet}`.toLowerCase();
+  return /\b(wordt bezorgd|bezorgdag|bezorgmoment|track.?(&)?.?trace|zending onderweg|pakket)\b/.test(text);
+}
+
+/** Haalt de eerstvolgende bezorgdatum uit tekst (Nederlandstalig). Geeft null als niks gevonden wordt. */
+function extractDeliveryDate(text) {
+  const lower = text.toLowerCase();
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (/\bvandaag\b/.test(lower)) return today;
+  if (/\bmorgen\b/.test(lower)) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+
+  // Bijv. "8 september" of "8 september 2026"
+  const monthPattern = DUTCH_MONTHS.join("|");
+  const dayMonthRegex = new RegExp(`\\b(\\d{1,2})\\s+(${monthPattern})(?:\\s+(\\d{4}))?\\b`, "i");
+  const dayMonthMatch = lower.match(dayMonthRegex);
+  if (dayMonthMatch) {
+    const day = parseInt(dayMonthMatch[1], 10);
+    const monthIndex = DUTCH_MONTHS.indexOf(dayMonthMatch[2].toLowerCase());
+    const explicitYear = dayMonthMatch[3] ? parseInt(dayMonthMatch[3], 10) : null;
+    let year = explicitYear || now.getFullYear();
+    let date = new Date(year, monthIndex, day);
+    // Zonder expliciet jaartal: als de datum al voorbij is, bedoel je volgend jaar.
+    if (!explicitYear && date < today) {
+      date = new Date(year + 1, monthIndex, day);
+    }
+    return date;
+  }
+
+  // Bijv. "08-09-2026" of "08/09/2026"
+  const numericMatch = lower.match(/\b(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})\b/);
+  if (numericMatch) {
+    return new Date(
+      parseInt(numericMatch[3], 10),
+      parseInt(numericMatch[2], 10) - 1,
+      parseInt(numericMatch[1], 10)
+    );
+  }
+
+  return null;
+}
+
+function deliveryEventStorageKey(message) {
+  return `postbus:deliveryEvent:${message.id}`;
+}
+
+/** Scant nieuwe pakket-bezorgmails en zet automatisch een agenda-item voor de bezorgdatum. */
+async function autoCreateDeliveryEvents(connectedAccounts, messages) {
+  const candidates = messages.filter(m =>
+    looksLikeDeliveryMail(m) && !localStorage.getItem(deliveryEventStorageKey(m))
+  );
+
+  for (const message of candidates) {
+    try {
+      const account = connectedAccounts.find(a => a.email === message.accountEmail);
+      if (!account) continue;
+
+      let bodyText = message.snippet || "";
+      if (account.provider !== "microsoft") {
+        const r = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
+          { headers: { Authorization: `Bearer ${account.token}` } }
+        );
+        if (r.ok) {
+          const data = await r.json();
+          bodyText = extractBody(data.payload) || bodyText;
+        }
+      }
+
+      const date = extractDeliveryDate(`${message.subject} ${bodyText}`);
+      if (!date) {
+        // Geen datum gevonden: niet blijven proberen bij elke nieuwe sync.
+        localStorage.setItem(deliveryEventStorageKey(message), "1");
+        continue;
+      }
+
+      const pad = n => String(n).padStart(2, "0");
+      const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + 1);
+      const endDateStr = `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}`;
+
+      const domain = webshopDomainFromEmail(message.from);
+      const carrier = domain.includes("dhl") ? "DHL"
+        : domain.includes("postnl") ? "PostNL"
+        : domain.includes("dpd") ? "DPD"
+        : domain.includes("ups") ? "UPS"
+        : domain.includes("bpost") ? "bpost"
+        : domain.includes("fedex") ? "FedEx"
+        : domain.includes("gls") ? "GLS"
+        : "Pakket";
+
+      await createEvent(message.accountEmail, {
+        title: `📦 Pakket bezorging (${carrier})`,
+        start: dateStr,
+        end: endDateStr,
+        allDay: true,
+        description: message.subject
+      });
+
+      localStorage.setItem(deliveryEventStorageKey(message), "1");
+    } catch (e) {
+      console.warn("Pakket-bezorgdatum verwerken mislukt voor bericht", message.id, e);
+    }
+  }
+}
+
 function looksLikeWebshopMail(message) {
   if (isKnownWebshopDomain(message.from)) return true;
   // Voor shops die niet in de lijst staan: bestel-/verzendtaal in het
@@ -389,6 +518,10 @@ async function refreshInbox() {
   if (state.settings.autoWebshop && state.activeFolder === "INBOX") {
     await autoMoveWebshopMail(connected, merged);
   }
+
+  // Pakket-bezorgmails (PostNL, DHL, en algemene pakketmails) scannen op
+  // een bezorgdatum en daar automatisch een agenda-item voor zetten.
+  await autoCreateDeliveryEvents(connected, merged);
 
   renderMessages();
 
