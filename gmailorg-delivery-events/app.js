@@ -1790,85 +1790,22 @@ function wireRoutePage() {
   wireStationAutocomplete("route-page-train-to", "route-page-train-to-suggestions");
 
   const trainChip = document.getElementById("route-page-train-chip");
-  const ovChip = document.getElementById("route-page-ov-chip");
   const carChip = document.getElementById("route-page-car-chip");
   const trainPanel = document.getElementById("route-page-train-panel");
-  const ovPanel = document.getElementById("route-page-ov-panel");
   const carPanel = document.getElementById("route-page-car-panel");
 
-  function activateChip(chip) {
-    [trainChip, ovChip, carChip].forEach(c => c.classList.remove("active"));
-    [trainPanel, ovPanel, carPanel].forEach(p => p.classList.add("hidden"));
-    chip.classList.add("active");
-  }
-
   trainChip.addEventListener("click", () => {
-    activateChip(trainChip);
+    trainChip.classList.add("active");
+    carChip.classList.remove("active");
     trainPanel.classList.remove("hidden");
+    carPanel.classList.add("hidden");
     ensureStationsLoaded();
   });
-  ovChip.addEventListener("click", () => {
-    activateChip(ovChip);
-    ovPanel.classList.remove("hidden");
-  });
   carChip.addEventListener("click", () => {
-    activateChip(carChip);
+    carChip.classList.add("active");
+    trainChip.classList.remove("active");
     carPanel.classList.remove("hidden");
-  });
-
-  document.getElementById("route-page-ov-search-btn").addEventListener("click", () => {
-    const statusEl = document.getElementById("route-page-ov-status");
-    const listEl = document.getElementById("route-page-ov-results");
-    listEl.innerHTML = "";
-
-    if (!("geolocation" in navigator)) { statusEl.classList.remove("hidden"); statusEl.textContent = "Locatie niet beschikbaar."; return; }
-
-    statusEl.classList.remove("hidden");
-    statusEl.textContent = "Je locatie wordt opgevraagd...";
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        statusEl.textContent = "Haltes zoeken...";
-        await ensureOvStopsLoaded();
-        if (!ovStopsCache) { statusEl.textContent = "Kon de haltelijst niet ophalen."; return; }
-
-        const nearest = ovStopsCache
-          .map(s => ({ ...s, distance: haversineDistanceMeters(latitude, longitude, s.lat, s.lon) }))
-          .sort((a, b) => a.distance - b.distance)
-          .slice(0, 3);
-
-        statusEl.textContent = "Vertrektijden ophalen...";
-        const perStop = await Promise.all(nearest.map(async (stop) => ({ stop, passes: await fetchOvDepartures(stop.code) })));
-
-        statusEl.classList.add("hidden");
-        let any = false;
-        perStop.forEach(({ stop, passes }) => {
-          passes.forEach(p => {
-            any = true;
-            const time = p.ExpectedDepartureTime || p.TargetDepartureTime;
-            const timeFmt = time ? new Date(time).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "?";
-
-            const li = document.createElement("li");
-            li.className = "restaurant-row";
-            li.innerHTML = `
-              <div class="restaurant-top">
-                <span class="restaurant-name">${escapeHtml(p.LinePublicNumber || "")} → ${escapeHtml(p.DestinationName50 || "?")}</span>
-                <span class="restaurant-distance">${timeFmt}</span>
-              </div>
-              <div class="restaurant-cuisine">${escapeHtml(stop.name)}</div>
-            `;
-            listEl.appendChild(li);
-          });
-        });
-        if (!any) { statusEl.classList.remove("hidden"); statusEl.textContent = "Geen vertrektijden gevonden."; }
-      },
-      (err) => {
-        statusEl.classList.remove("hidden");
-        statusEl.textContent = "Kon je locatie niet ophalen: " + (err.message || "toestemming geweigerd.");
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    trainPanel.classList.add("hidden");
   });
 
   let lastTrainSearch = null; // { fromCode, toCode }
