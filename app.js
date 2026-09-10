@@ -165,7 +165,8 @@ async function autoCreateDeliveryEvents(connectedAccounts, messages) {
         );
         if (r.ok) {
           const data = await r.json();
-          bodyText = extractBody(data.payload) || bodyText;
+          const { html, text } = extractBodyParts(data.payload);
+          bodyText = text || (html ? stripHtml(html) : "") || bodyText;
         }
       }
 
@@ -917,22 +918,42 @@ function cleanupExpiredSnoozes() {
 
 /* ---------------- Detail / volledige berichttekst ---------------- */
 
-function decodeBase64Url(data) {
-  if (!data) return "";
-  const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
-  try { return decodeURIComponent(escape(atob(base64))); }
-  catch (e) { try { return atob(base64); } catch (e2) { return ""; } }
-}
-
 function getPartHeader(part, name) {
   const headers = part.headers || [];
   const h = headers.find(x => x.name.toLowerCase() === name.toLowerCase());
   return h ? h.value : "";
 }
 
-function decodeQuotedPrintable(str) {
+/** Haalt het charset (bijv. "utf-8", "iso-8859-1") uit de Content-Type header van een mail-onderdeel. */
+function getPartCharset(part) {
+  const contentType = getPartHeader(part, "Content-Type");
+  const match = contentType.match(/charset="?([\w-]+)"?/i);
+  return match ? match[1].toLowerCase() : "utf-8";
+}
+
+/** Zet een base64url-string om in ruwe bytes (nog niet naar tekst gedecodeerd). */
+function base64UrlToBytes(data) {
+  if (!data) return new Uint8Array();
+  const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Decodeert bytes naar tekst met het opgegeven charset; valt terug op UTF-8 bij een onbekend/fout charset. */
+function decodeBytesWithCharset(bytes, charset) {
+  try { return new TextDecoder(charset || "utf-8").decode(bytes); }
+  catch (e) {
+    try { return new TextDecoder("utf-8").decode(bytes); }
+    catch (e2) { return ""; }
+  }
+}
+
+/** Zet een quoted-printable ASCII-tekst (met =XX-escapes) om in de onderliggende ruwe bytes. */
+function quotedPrintableAsciiToBytes(asciiStr) {
   // Zachte regeleindes (soft line breaks) weghalen.
-  const cleaned = str.replace(/=\r\n/g, "").replace(/=\n/g, "");
+  const cleaned = asciiStr.replace(/=\r\n/g, "").replace(/=\n/g, "");
   const bytes = [];
   for (let i = 0; i < cleaned.length; i++) {
     if (cleaned[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(cleaned.substr(i + 1, 2))) {
@@ -942,41 +963,82 @@ function decodeQuotedPrintable(str) {
       bytes.push(cleaned.charCodeAt(i));
     }
   }
-  try {
-    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
-  } catch (e) {
-    return cleaned;
-  }
+  return new Uint8Array(bytes);
 }
 
+/** Decodeert de body van één Gmail-berichtdeel, met het juiste charset en transfer-encoding. */
 function decodePartBody(part) {
-  const raw = decodeBase64Url(part.body?.data);
+  const charset = getPartCharset(part);
   const encoding = getPartHeader(part, "Content-Transfer-Encoding").toLowerCase();
-  if (encoding.includes("quoted-printable")) return decodeQuotedPrintable(raw);
-  return raw;
+  const rawBytes = base64UrlToBytes(part.body?.data);
+  if (encoding.includes("quoted-printable")) {
+    // De ruwe bytes zijn hier de quoted-printable ASCII-tekst zelf (bijv. "=E2=82=AC").
+    // Eerst als ASCII/Latin-1 lezen om de =XX-escapes te vinden, dan de
+    // resulterende bytes met het echte charset van de mail decoderen.
+    const asciiText = decodeBytesWithCharset(rawBytes, "iso-8859-1");
+    const decodedBytes = quotedPrintableAsciiToBytes(asciiText);
+    return decodeBytesWithCharset(decodedBytes, charset);
+  }
+  return decodeBytesWithCharset(rawBytes, charset);
 }
 
-function extractBody(payload) {
-  if (!payload) return "";
-  if (payload.mimeType === "text/plain" && payload.body?.data) return decodePartBody(payload);
+/** Haalt zowel de HTML- als platte-tekstversie van een Gmail-payload op (voor de detailweergave). */
+function extractBodyParts(payload) {
+  if (!payload) return { html: "", text: "" };
+  if (payload.mimeType === "text/html" && payload.body?.data) return { html: decodePartBody(payload), text: "" };
+  if (payload.mimeType === "text/plain" && payload.body?.data) return { html: "", text: decodePartBody(payload) };
   if (payload.parts) {
-    const plain = payload.parts.find(p => p.mimeType === "text/plain");
-    if (plain && plain.body?.data) return decodePartBody(plain);
     const html = payload.parts.find(p => p.mimeType === "text/html");
-    if (html && html.body?.data) return stripHtml(decodePartBody(html));
+    const plain = payload.parts.find(p => p.mimeType === "text/plain");
+    const result = {
+      html: html && html.body?.data ? decodePartBody(html) : "",
+      text: plain && plain.body?.data ? decodePartBody(plain) : ""
+    };
+    if (result.html || result.text) return result;
     for (const part of payload.parts) {
-      const nested = extractBody(part);
-      if (nested) return nested;
+      const nested = extractBodyParts(part);
+      if (nested.html || nested.text) return nested;
     }
   }
-  if (payload.mimeType === "text/html" && payload.body?.data) return stripHtml(decodePartBody(payload));
-  return "";
+  return { html: "", text: "" };
+}
+
+/** Oude platte-tekst-extractor — gebruikt op plekken waar alleen platte tekst nodig is (bijv. bezorgdatum herkennen). */
+function extractBody(payload) {
+  const { html, text } = extractBodyParts(payload);
+  return text || (html ? stripHtml(html) : "");
 }
 
 function stripHtml(html) {
   const d = document.createElement("div");
   d.innerHTML = html;
   return d.textContent || "";
+}
+
+/** Toont een e-mailbody netjes: HTML-mails in een geïsoleerde iframe (met opmaak), platte tekst als voorgevormde tekst. */
+function renderMessageBody(container, html, text, fallbackSnippet) {
+  container.innerHTML = "";
+  if (html) {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-same-origin allow-popups");
+    iframe.style.width = "100%";
+    iframe.style.border = "0";
+    iframe.style.display = "block";
+    iframe.style.background = "#fff";
+    container.appendChild(iframe);
+    const doc = iframe.contentDocument;
+    doc.open();
+    doc.write(`<base target="_blank"><style>body{margin:0;font-family:sans-serif;}</style>${html}`);
+    doc.close();
+    const resize = () => { try { iframe.style.height = doc.body.scrollHeight + 20 + "px"; } catch (e) {} };
+    iframe.onload = resize;
+    requestAnimationFrame(resize);
+  } else {
+    const box = document.createElement("div");
+    box.style.whiteSpace = "pre-wrap";
+    box.textContent = text || fallbackSnippet || "(geen tekst gevonden)";
+    container.appendChild(box);
+  }
 }
 
 let activeDetailMessage = null;
@@ -1003,17 +1065,23 @@ async function openDetail(message) {
       });
       const data = await r.json();
       const raw = data.body?.content || "";
-      const text = data.body?.contentType === "html" ? stripHtml(raw) : raw;
-      document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
+      const isHtml = data.body?.contentType === "html";
+      renderMessageBody(
+        document.getElementById("detail-body"),
+        isHtml ? raw : "",
+        isHtml ? "" : raw,
+        message.snippet
+      );
     } else {
       const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
         headers: { Authorization: `Bearer ${account.token}` }
       });
       const data = await r.json();
-      document.getElementById("detail-body").textContent = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
+      const { html, text } = extractBodyParts(data.payload);
+      renderMessageBody(document.getElementById("detail-body"), html, text, message.snippet);
     }
   } catch (e) {
-    document.getElementById("detail-body").textContent = message.snippet || "Kon bericht niet volledig laden.";
+    renderMessageBody(document.getElementById("detail-body"), "", "", message.snippet || "Kon bericht niet volledig laden.");
   }
 }
 
