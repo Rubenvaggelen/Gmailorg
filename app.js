@@ -978,11 +978,23 @@ function decodePartBody(part) {
 
 function extractBody(payload) {
   if (!payload) return "";
-  if (payload.mimeType === "text/plain" && payload.body?.data) return decodePartBody(payload);
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    const plainText = decodePartBody(payload);
+    return looksLikeRawCss(plainText) ? "" : plainText;
+  }
   if (payload.parts) {
     const plain = payload.parts.find(p => p.mimeType === "text/plain");
-    if (plain && plain.body?.data) return decodePartBody(plain);
     const html = payload.parts.find(p => p.mimeType === "text/html");
+    if (plain && plain.body?.data) {
+      const plainText = decodePartBody(plain);
+      // Sommige afzenders (bijv. LinkedIn) sturen een kapot gegenereerde
+      // text/plain-versie mee die zelf ruwe CSS/HTML-comment-hacks bevat
+      // (@media, !important, <!-- ... -->). Die willen we niet tonen als
+      // leestekst — val dan terug op de (wél gestripte) HTML-versie.
+      if (!looksLikeRawCss(plainText)) return plainText;
+      if (html && html.body?.data) return stripHtml(decodePartBody(html));
+      return plainText;
+    }
     if (html && html.body?.data) return stripHtml(decodePartBody(html));
     for (const part of payload.parts) {
       const nested = extractBody(part);
@@ -991,6 +1003,15 @@ function extractBody(payload) {
   }
   if (payload.mimeType === "text/html" && payload.body?.data) return stripHtml(decodePartBody(payload));
   return "";
+}
+
+// Herkent of een stuk "platte tekst" eigenlijk verkapte/lekkende CSS is
+// (gebeurt bij sommige afzenders met een kapotte plain-text-fallback).
+function looksLikeRawCss(text) {
+  if (!text) return false;
+  const sample = text.slice(0, 2000);
+  const hits = (sample.match(/@media\b|!important|<!--|-->|\.[a-zA-Z][\w-]*\s*(,\s*\.[a-zA-Z][\w-]*\s*)*\{|\{\s*[\w-]+\s*:\s*[^{}]*\}/g) || []).length;
+  return hits >= 2;
 }
 
 function stripHtml(html) {
@@ -1023,11 +1044,22 @@ async function openDetail(message) {
   try {
     if (account.provider === "microsoft") {
       const r = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}?$select=body`, {
-        headers: { Authorization: `Bearer ${account.token}` }
+        headers: {
+          Authorization: `Bearer ${account.token}`,
+          // Vraag Graph expliciet om de HTML-versie van het bericht. Zonder
+          // deze header koos Graph soms zelf voor "text"-contentType, en die
+          // platte-tekstversie bleek bij sommige afzenders (bijv. LinkedIn)
+          // zelf al kapotte/lekkende CSS te bevatten — die werd dan ongefilterd
+          // getoond omdat stripHtml() alleen op "html"-content werd toegepast.
+          Prefer: 'outlook.body-content-type="html"'
+        }
       });
       const data = await r.json();
       const raw = data.body?.content || "";
-      const text = data.body?.contentType === "html" ? stripHtml(raw) : raw;
+      let text = data.body?.contentType === "html" ? stripHtml(raw) : raw;
+      // Vangnet: als het toch een platte-tekstversie was én die op verkapte
+      // CSS lijkt, verberg de rommel liever dan hem te tonen.
+      if (data.body?.contentType !== "html" && looksLikeRawCss(text)) text = "";
       document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
     } else {
       const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
