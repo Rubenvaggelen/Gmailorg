@@ -1014,6 +1014,36 @@ function looksLikeRawCss(text) {
   return hits >= 2;
 }
 
+// Herkent één losse regel die op een CSS-declaratie/mediaquery/sluit-accolade
+// lijkt. Dit is een vangnet dat werkt ongeacht of de rommel via een kapotte
+// plain-text-fallback binnenkwam, of via HTML-inhoud die niet netjes in een
+// <style>-tag stond (en dus niet door stripHtml() werd verwijderd).
+function isCssLikeLine(line) {
+  const t = line.trim();
+  if (!t) return false;
+  return (
+    /^@media\b/i.test(t) ||                                        // @media (max-width: ...) {
+    /^[.#]?[\w-]+(\s*,\s*[.#]?[\w-]+)*\s*\{?\s*$/.test(t) && /[.#]/.test(t) || // .c1, .c1{
+    /^\{?\s*[\w-]+\s*:\s*[^{};]+;?\s*\}?$/.test(t) ||               // width: 100% !important;
+    /^\}+$/.test(t) ||                                              // losse sluit-accolade(s)
+    (/!important/i.test(t) && /[{};:]/.test(t)) ||                  // ...!important;} varianten
+    /^-{2,}>$/.test(t) || /^<!--/.test(t)                           // restanten van comment-hacks
+  );
+}
+
+// Laatste opschoonstap vlak voordat tekst getoond wordt: verwijdert regels
+// die op lekkende CSS lijken, ongeacht waar in de pijplijn ze vandaan komen.
+function cleanBodyText(text) {
+  if (!text) return text;
+  const cleaned = text
+    .split(/\r?\n/)
+    .filter(line => !isCssLikeLine(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned;
+}
+
 function stripHtml(html) {
   const d = document.createElement("div");
   d.innerHTML = html;
@@ -1021,6 +1051,9 @@ function stripHtml(html) {
   // en werd daardoor ten onrechte meegenomen in .textContent (zichtbaar als
   // rommelige CSS-regels bovenaan de e-mail). Die moeten er eerst uit.
   d.querySelectorAll("style, script, head").forEach(el => el.remove());
+  // Verberg ook expliciet verborgen elementen (preheader-trucs e.d.) die
+  // sommige afzenders gebruiken — die horen sowieso niet leesbaar te zijn.
+  d.querySelectorAll('[style*="display:none" i], [style*="display: none" i], [style*="mso-hide" i]').forEach(el => el.remove());
   return d.textContent || "";
 }
 
@@ -1060,13 +1093,15 @@ async function openDetail(message) {
       // Vangnet: als het toch een platte-tekstversie was én die op verkapte
       // CSS lijkt, verberg de rommel liever dan hem te tonen.
       if (data.body?.contentType !== "html" && looksLikeRawCss(text)) text = "";
+      text = cleanBodyText(text);
       document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
     } else {
       const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
         headers: { Authorization: `Bearer ${account.token}` }
       });
       const data = await r.json();
-      document.getElementById("detail-body").textContent = extractBody(data.payload) || message.snippet || "(geen tekst gevonden)";
+      const text = cleanBodyText(extractBody(data.payload));
+      document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
     }
   } catch (e) {
     document.getElementById("detail-body").textContent = message.snippet || "Kon bericht niet volledig laden.";
