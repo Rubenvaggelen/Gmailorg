@@ -1057,6 +1057,96 @@ function stripHtml(html) {
   return d.textContent || "";
 }
 
+// Haalt zowel de text/html- als text/plain-versie van een Gmail-bericht op,
+// zonder ze meteen om te zetten naar platte tekst — nodig om de e-mail met
+// zijn originele opmaak (logo's, kleuren, layout) te kunnen tonen.
+function extractRawParts(payload) {
+  if (!payload) return { html: null, plain: null };
+  if (payload.mimeType === "text/html" && payload.body?.data) {
+    return { html: decodePartBody(payload), plain: null };
+  }
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    return { html: null, plain: decodePartBody(payload) };
+  }
+  if (payload.parts) {
+    const htmlPart = payload.parts.find(p => p.mimeType === "text/html");
+    const plainPart = payload.parts.find(p => p.mimeType === "text/plain");
+    const html = htmlPart && htmlPart.body?.data ? decodePartBody(htmlPart) : null;
+    const plain = plainPart && plainPart.body?.data ? decodePartBody(plainPart) : null;
+    if (html || plain) return { html, plain };
+    for (const part of payload.parts) {
+      const nested = extractRawParts(part);
+      if (nested.html || nested.plain) return nested;
+    }
+  }
+  return { html: null, plain: null };
+}
+
+// Maakt e-mail-HTML veilig genoeg om in een sandboxed iframe te tonen:
+// scripts eruit, event-handlers eruit, javascript:-links eruit, en gewone
+// links altijd in een nieuw tabblad (nooit binnen het sandbox-frame zelf).
+// <style>-tags laten we juist wél staan — die willen we nu net gebruiken.
+function sanitizeEmailHtml(html) {
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  d.querySelectorAll("script").forEach(el => el.remove());
+  d.querySelectorAll("*").forEach(el => {
+    [...el.attributes].forEach(attr => {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith("on")) el.removeAttribute(attr.name);
+      if ((name === "href" || name === "src") && /^\s*javascript:/i.test(attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  d.querySelectorAll("a[href]").forEach(a => {
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
+  return d.innerHTML;
+}
+
+// Bouwt een volwaardig, op zichzelf staand HTML-document voor in de iframe,
+// met wat basis-CSS zodat de mail netjes binnen het schermbreedte blijft.
+function buildEmailDocument(sanitizedBodyHtml) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin:0; padding:12px; background:#fff; color:#111; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  img { max-width:100%; height:auto; }
+  table { max-width:100%; }
+  a { color:#0b5fff; }
+</style>
+</head>
+<body>${sanitizedBodyHtml}</body>
+</html>`;
+}
+
+// Toont het bericht: bij voorkeur met originele opmaak/logo's in het
+// sandboxed iframe; anders (geen HTML-versie beschikbaar) platte tekst.
+function renderEmailBody({ html, plainFallback, snippet }) {
+  const textEl = document.getElementById("detail-body");
+  const frameEl = document.getElementById("detail-body-frame");
+
+  if (html && html.trim()) {
+    const sanitized = sanitizeEmailHtml(html);
+    frameEl.srcdoc = buildEmailDocument(sanitized);
+    frameEl.classList.remove("hidden");
+    textEl.classList.add("hidden");
+    textEl.textContent = "";
+    return;
+  }
+
+  frameEl.classList.add("hidden");
+  frameEl.srcdoc = "about:blank";
+  textEl.classList.remove("hidden");
+  const fallbackText = cleanBodyText(plainFallback);
+  textEl.textContent = fallbackText || snippet || "(geen tekst gevonden)";
+}
+
 let activeDetailMessage = null;
 
 async function openDetail(message) {
@@ -1064,6 +1154,8 @@ async function openDetail(message) {
   document.getElementById("detail-subject").textContent = message.subject;
   document.getElementById("detail-from").textContent = `${stripAngle(message.from)} · ${message.accountEmail}`;
   document.getElementById("detail-time").textContent = new Date(message.timestamp).toLocaleString("nl-NL");
+  document.getElementById("detail-body-frame").classList.add("hidden");
+  document.getElementById("detail-body").classList.remove("hidden");
   document.getElementById("detail-body").textContent = "Bericht laden…";
   document.getElementById("detail-snooze-options").classList.add("hidden");
   document.getElementById("detail-reply-box").classList.add("hidden");
@@ -1079,31 +1171,30 @@ async function openDetail(message) {
       const r = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${message.id}?$select=body`, {
         headers: {
           Authorization: `Bearer ${account.token}`,
-          // Vraag Graph expliciet om de HTML-versie van het bericht. Zonder
-          // deze header koos Graph soms zelf voor "text"-contentType, en die
-          // platte-tekstversie bleek bij sommige afzenders (bijv. LinkedIn)
-          // zelf al kapotte/lekkende CSS te bevatten — die werd dan ongefilterd
-          // getoond omdat stripHtml() alleen op "html"-content werd toegepast.
+          // Vraag Graph expliciet om de HTML-versie van het bericht, zodat
+          // we die met originele opmaak/logo's kunnen tonen.
           Prefer: 'outlook.body-content-type="html"'
         }
       });
       const data = await r.json();
       const raw = data.body?.content || "";
-      let text = data.body?.contentType === "html" ? stripHtml(raw) : raw;
-      // Vangnet: als het toch een platte-tekstversie was én die op verkapte
-      // CSS lijkt, verberg de rommel liever dan hem te tonen.
-      if (data.body?.contentType !== "html" && looksLikeRawCss(text)) text = "";
-      text = cleanBodyText(text);
-      document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
+      const isHtml = data.body?.contentType === "html";
+      renderEmailBody({
+        html: isHtml ? raw : null,
+        plainFallback: isHtml ? null : raw,
+        snippet: message.snippet
+      });
     } else {
       const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`, {
         headers: { Authorization: `Bearer ${account.token}` }
       });
       const data = await r.json();
-      const text = cleanBodyText(extractBody(data.payload));
-      document.getElementById("detail-body").textContent = text || message.snippet || "(geen tekst gevonden)";
+      const { html, plain } = extractRawParts(data.payload);
+      renderEmailBody({ html, plainFallback: plain, snippet: message.snippet });
     }
   } catch (e) {
+    document.getElementById("detail-body-frame").classList.add("hidden");
+    document.getElementById("detail-body").classList.remove("hidden");
     document.getElementById("detail-body").textContent = message.snippet || "Kon bericht niet volledig laden.";
   }
 }
