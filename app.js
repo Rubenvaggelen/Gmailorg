@@ -2202,42 +2202,15 @@ function fuelBoundingBox(lat, lng, radiusKm) {
 }
 
 async function fuelApiGet(path) {
-  const separator = path.includes("?") ? "&" : "?";
-  const targetUrl = `${FUEL_API_BASE}${path}${separator}apikey=${FUEL_API_KEY}`;
+  // Loopt via je eigen Cloudflare Worker-tussenstation, die het verzoek
+  // server-side doorstuurt naar de ANWB-API (met de apiKey erbij) en het
+  // resultaat teruggeeft met de juiste CORS-headers. Vervang de URL hieronder
+  // door je eigen Worker-URL (bijv. https://anwb-fuel-proxy.jouwnaam.workers.dev).
+  const workerUrl = "https://anwb-fuel-proxy.ruben-vanaggelen.workers.dev/?path=" + encodeURIComponent(path);
 
-  // Eerste poging: rechtstreeks. Deze API is voor de ANWB-app zelf gebouwd,
-  // niet voor browsers, en blokkeert normaal gesproken cross-origin verzoeken
-  // (CORS) — die poging faalt dan meteen met een netwerkfout ("Failed to
-  // fetch"), zonder dat de browser ooit een echt antwoord ziet.
-  try {
-    const res = await fetch(FUEL_API_BASE + path, { headers: { apiKey: FUEL_API_KEY } });
-    if (res.ok) return res.json();
-    throw new Error("status " + res.status);
-  } catch (directErr) {
-    console.warn("Directe ANWB-aanroep mislukt (" + directErr.message + "), val terug op CORS-proxy's.");
-  }
-
-  // Terugval: probeer een rijtje openbare CORS-proxy's na elkaar. Dit zijn
-  // gratis diensten van derden (niet van ANWB of jou) die soms zelf ook
-  // eens plat liggen — daarom meerdere, in plaats van op één te vertrouwen.
-  const proxyAttempts = [
-    () => "https://api.allorigins.win/raw?url=" + encodeURIComponent(targetUrl),
-    () => "https://corsproxy.io/?url=" + encodeURIComponent(targetUrl),
-    () => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(targetUrl)
-  ];
-
-  const errors = [];
-  for (const buildUrl of proxyAttempts) {
-    try {
-      const res = await fetch(buildUrl());
-      if (!res.ok) { errors.push("status " + res.status); continue; }
-      return await res.json();
-    } catch (proxyErr) {
-      errors.push(proxyErr.message);
-    }
-  }
-
-  throw new Error("Alle pogingen (rechtstreeks + " + proxyAttempts.length + " proxy's) mislukt: " + errors.join(" | "));
+  const res = await fetch(workerUrl);
+  if (!res.ok) throw new Error("Tankstation-proxy gaf status " + res.status);
+  return res.json();
 }
 
 function extractFuelPrice(station) {
