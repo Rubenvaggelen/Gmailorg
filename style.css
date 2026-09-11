@@ -684,6 +684,19 @@ main {
   overflow-y: auto;
 }
 
+.detail-body-frame {
+  display: block;
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+  background: #fff;
+  border-radius: 4px;
+  max-height: 60vh;
+  min-height: 120px;
+}
+
 .detail-actions {
   display: flex;
   flex-wrap: wrap;
