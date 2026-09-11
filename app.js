@@ -2202,9 +2202,26 @@ function fuelBoundingBox(lat, lng, radiusKm) {
 }
 
 async function fuelApiGet(path) {
-  const res = await fetch(FUEL_API_BASE + path, { headers: { apiKey: FUEL_API_KEY } });
-  if (!res.ok) throw new Error("Tankstation-API gaf status " + res.status);
-  return res.json();
+  const separator = path.includes("?") ? "&" : "?";
+  const targetUrl = `${FUEL_API_BASE}${path}${separator}apikey=${FUEL_API_KEY}`;
+
+  // Eerste poging: rechtstreeks. Deze API is voor de ANWB-app zelf gebouwd,
+  // niet voor browsers, en blokkeert normaal gesproken cross-origin verzoeken
+  // (CORS) — die poging faalt dan meteen met een netwerkfout ("Failed to
+  // fetch"), zonder dat de browser ooit een echt antwoord ziet.
+  try {
+    const res = await fetch(FUEL_API_BASE + path, { headers: { apiKey: FUEL_API_KEY } });
+    if (res.ok) return res.json();
+    throw new Error("status " + res.status);
+  } catch (directErr) {
+    // Terugval: via een openbare CORS-proxy die het verzoek server-side
+    // uitvoert en de resultaten teruggeeft met de juiste CORS-headers.
+    console.warn("Directe ANWB-aanroep mislukt (" + directErr.message + "), val terug op CORS-proxy.");
+    const proxied = "https://api.allorigins.win/raw?url=" + encodeURIComponent(targetUrl);
+    const res2 = await fetch(proxied);
+    if (!res2.ok) throw new Error("Tankstation-API (via proxy) gaf status " + res2.status);
+    return res2.json();
+  }
 }
 
 function extractFuelPrice(station) {
