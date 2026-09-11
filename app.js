@@ -2214,14 +2214,30 @@ async function fuelApiGet(path) {
     if (res.ok) return res.json();
     throw new Error("status " + res.status);
   } catch (directErr) {
-    // Terugval: via een openbare CORS-proxy die het verzoek server-side
-    // uitvoert en de resultaten teruggeeft met de juiste CORS-headers.
-    console.warn("Directe ANWB-aanroep mislukt (" + directErr.message + "), val terug op CORS-proxy.");
-    const proxied = "https://api.allorigins.win/raw?url=" + encodeURIComponent(targetUrl);
-    const res2 = await fetch(proxied);
-    if (!res2.ok) throw new Error("Tankstation-API (via proxy) gaf status " + res2.status);
-    return res2.json();
+    console.warn("Directe ANWB-aanroep mislukt (" + directErr.message + "), val terug op CORS-proxy's.");
   }
+
+  // Terugval: probeer een rijtje openbare CORS-proxy's na elkaar. Dit zijn
+  // gratis diensten van derden (niet van ANWB of jou) die soms zelf ook
+  // eens plat liggen — daarom meerdere, in plaats van op één te vertrouwen.
+  const proxyAttempts = [
+    () => "https://api.allorigins.win/raw?url=" + encodeURIComponent(targetUrl),
+    () => "https://corsproxy.io/?url=" + encodeURIComponent(targetUrl),
+    () => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(targetUrl)
+  ];
+
+  const errors = [];
+  for (const buildUrl of proxyAttempts) {
+    try {
+      const res = await fetch(buildUrl());
+      if (!res.ok) { errors.push("status " + res.status); continue; }
+      return await res.json();
+    } catch (proxyErr) {
+      errors.push(proxyErr.message);
+    }
+  }
+
+  throw new Error("Alle pogingen (rechtstreeks + " + proxyAttempts.length + " proxy's) mislukt: " + errors.join(" | "));
 }
 
 function extractFuelPrice(station) {
