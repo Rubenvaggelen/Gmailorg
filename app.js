@@ -2280,7 +2280,7 @@ async function searchFuelStations() {
   } catch (e) {
     console.error("Tankstations zoeken mislukt", e);
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Kon geen tankstations ophalen — probeer het later opnieuw.";
+    statusEl.textContent = "Kon geen tankstations ophalen: " + (e.message || e.name || "onbekende fout");
   }
 }
 
