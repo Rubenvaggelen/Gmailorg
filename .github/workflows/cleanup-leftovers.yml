@@ -1,0 +1,41 @@
+name: Cleanup leftover backup files
+
+# Draait automatisch bij elke push naar main, en verwijdert bekende
+# verouderde back-up/zip-bestanden die per ongeluk teruggezet fixes
+# veroorzaken (zie o.a. gmailorg-auto-refresh-fix.zip).
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verwijder bekende verouderde bestanden/mappen
+        run: |
+          rm -f gmailorg-auto-refresh-fix.zip
+          rm -f gmailorg-fix-encoding.zip
+          rm -f gmailorg-fix-striphtml.zip
+          rm -f gmailorg-hide-route-tab.zip
+          rm -rf gmailorg-delivery-events
+          rm -rf gmailorg-fix-encoding
+          rm -rf gmailorg-fix-striphtml
+          rm -rf gmailorg-fix
+          rm -rf gmailorg-hide-route-tab
+
+      - name: Commit opruiming (indien nodig)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "Automatische opruiming: verwijder verouderde back-up/zip-bestanden"
+            git push
+          else
+            echo "Niets op te ruimen."
+          fi
