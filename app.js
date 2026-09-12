@@ -299,10 +299,15 @@ function boot() {
 
   // Voor elk account: plan een stille ververs-poging vlak vóór het token
   // verloopt, of probeer er meteen één als het token al verlopen is.
-  // (Voor Microsoft-accounts gebeurt dit los, via de "Opnieuw verbinden"-knop —
-  // MSAL's eigen stille verversing vereist een net iets ander patroon.)
+  // Werkt nu voor zowel Gmail als Hotmail/Outlook, mits MSAL de sessie nog
+  // in localStorage heeft (zie cacheLocation hierboven) — anders blijft
+  // "Opnieuw verbinden" de terugval-optie.
   state.accounts.forEach(a => {
-    if (a.provider === "microsoft") return;
+    if (a.provider === "microsoft") {
+      if (a.token) scheduleSilentRefreshMicrosoft(a);
+      else silentRefreshMicrosoftAccount(a.email);
+      return;
+    }
     if (a.token) scheduleSilentRefresh(a);
     else silentRefreshAccount(a.email);
   });
@@ -405,6 +410,7 @@ function addOrUpdateAccount(email, token, expiresIn, provider = "google") {
   }
   persistAccounts();
   if (provider === "google") scheduleSilentRefresh(account);
+  else if (provider === "microsoft") scheduleSilentRefreshMicrosoft(account);
   renderAccounts();
   renderChips();
   renderCalendarAccountChips();
@@ -425,6 +431,16 @@ function getMsalInstance() {
       clientId: state.msClientId,
       authority: "https://login.microsoftonline.com/common",
       redirectUri: window.location.origin + window.location.pathname
+    },
+    // Zonder dit vergeet MSAL de Hotmail-login zodra de pagina/app opnieuw
+    // wordt geopend (standaard gebruikt MSAL sessionStorage, dat leeg is bij
+    // een nieuwe start), waardoor je steeds handmatig "Opnieuw verbinden"
+    // moest klikken. Met localStorage blijft de sessie bewaard, zodat er
+    // net als bij Gmail op de achtergrond stil een nieuw token gehaald kan
+    // worden.
+    cache: {
+      cacheLocation: "localStorage",
+      storeAuthStateInCookie: false
     }
   });
   return msalInstance;
@@ -465,6 +481,35 @@ async function reconnectMicrosoftAccount(email) {
     addOrUpdateAccount(email, result.accessToken, expiresIn, "microsoft");
   } catch (e) {
     alert("Opnieuw verbinden mislukt: " + (e.errorMessage || e.message || e));
+  }
+}
+
+/* ---------------- Stil verversen op de achtergrond (Microsoft) ---------------- */
+
+function scheduleSilentRefreshMicrosoft(account) {
+  if (account.refreshTimer) clearTimeout(account.refreshTimer);
+  if (!account.tokenExpiry) return;
+  const delay = Math.max(account.tokenExpiry - Date.now() - 5 * 60 * 1000, 10000);
+  account.refreshTimer = setTimeout(() => silentRefreshMicrosoftAccount(account.email), delay);
+}
+
+async function silentRefreshMicrosoftAccount(email, retriesLeft = 3) {
+  const app = getMsalInstance();
+  if (!app) {
+    // Het MSAL-script (async geladen) is er soms nog niet meteen bij het
+    // opstarten — een paar keer opnieuw proberen met een korte pauze.
+    if (retriesLeft > 0) setTimeout(() => silentRefreshMicrosoftAccount(email, retriesLeft - 1), 1500);
+    return;
+  }
+  try {
+    const accounts = app.getAllAccounts().filter(a => a.username === email);
+    if (accounts.length === 0) return; // geen bewaarde sessie meer; gebruiker moet handmatig opnieuw verbinden
+    const result = await app.acquireTokenSilent({ scopes: MS_SCOPES, account: accounts[0] });
+    const expiresIn = Math.max(1, Math.round((result.expiresOn.getTime() - Date.now()) / 1000));
+    addOrUpdateAccount(email, result.accessToken, expiresIn, "microsoft");
+  } catch (e) {
+    console.warn("Stil verversen (Microsoft) mislukt voor", email, e);
+    // gebruiker moet dan handmatig opnieuw verbinden via de "Opnieuw verbinden"-knop
   }
 }
 
