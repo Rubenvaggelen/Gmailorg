@@ -1,5 +1,5 @@
 /* ============================================================
-   Gmail Org — multi-account Gmail + Calendar control tower
+   Mail — multi-account Gmail + Calendar control tower
    Alles draait client-side: geen eigen server, geen wachtwoorden
    opgeslagen. Tokens leven alleen in het geheugen van de sessie.
    ============================================================ */

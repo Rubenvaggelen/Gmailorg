@@ -1,4 +1,4 @@
-# Gmail Org — je Gmail én Agenda in één app
+# Mail — je Gmail én Agenda in één app
 
 Een installeerbare web-app (PWA) die 3-5 Google-accounts samenvoegt:
 mail met regels/automatisering, én een gedeelde kalender. Er is geen

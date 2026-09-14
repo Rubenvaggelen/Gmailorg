@@ -1,6 +1,6 @@
 {
-  "name": "Gmail Org",
-  "short_name": "Gmail Org",
+  "name": "Mail",
+  "short_name": "Mail",
   "description": "Al je Gmail-accounts en agenda's in één overzicht, met automatische regels.",
   "start_url": "./index.html",
   "display": "standalone",
