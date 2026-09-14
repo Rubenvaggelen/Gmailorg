@@ -1,0 +1,100 @@
+/* Mail update: e-mail detail fullscreen */
+#detail-modal {
+  background: var(--surface-raised, #12141c);
+  align-items: stretch;
+  overscroll-behavior: none;
+  z-index: 50;
+}
+
+#detail-modal .detail-card {
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  padding:
+    calc(14px + env(safe-area-inset-top))
+    16px
+    calc(14px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised, #12141c);
+}
+
+#detail-modal .detail-head {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+#detail-modal #detail-close {
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#detail-modal .detail-subject {
+  font-size: clamp(19px, 4.5vw, 25px);
+  line-height: 1.2;
+}
+
+#detail-modal .detail-body,
+#detail-modal .detail-body-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin-bottom: 10px;
+}
+
+#detail-modal .detail-body {
+  overflow-y: auto;
+  padding: 14px 2px;
+}
+
+#detail-modal .detail-body-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+#detail-modal .detail-actions,
+#detail-modal .snooze-options,
+#detail-modal .reply-box {
+  flex: 0 0 auto;
+}
+
+#detail-modal .detail-actions {
+  padding-top: 2px;
+}
+
+#detail-forward {
+  min-width: 112px;
+}
+
+@media (max-width: 560px) {
+  #detail-modal .detail-card {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  #detail-modal .detail-head {
+    gap: 8px;
+  }
+
+  #detail-modal #detail-close {
+    font-size: 12px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  #detail-modal .detail-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #detail-modal .detail-actions button {
+    width: 100%;
+  }
+}
