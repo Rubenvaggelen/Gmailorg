@@ -6,6 +6,11 @@ if [[ ! -f index.html || ! -f app.js || ! -f style.css ]]; then
   exit 1
 fi
 
+if [[ ! -f mail-fullscreen-forward.js || ! -f mail-fullscreen-forward.css ]]; then
+  echo "FOUT: mail-fullscreen-forward.js/css staan niet in deze map. Pak eerst de update-ZIP hier uit." >&2
+  exit 1
+fi
+
 # Voeg de extra CSS maar één keer toe.
 if ! grep -q 'mail-fullscreen-forward.css' index.html; then
   python3 - <<'PY'
@@ -36,5 +41,17 @@ p.write_text(s, encoding='utf-8')
 PY
 fi
 
-echo "Mail-update toegepast: fullscreen e-mailweergave + Doorsturen."
+# Maak links in de sandboxed mailviewer expliciet navigeerbaar bij user-click.
+python3 - <<'PY'
+from pathlib import Path
+p = Path('index.html')
+s = p.read_text(encoding='utf-8')
+old = 'sandbox="allow-popups allow-popups-to-escape-sandbox"'
+new = 'sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"'
+if old in s:
+    s = s.replace(old, new)
+p.write_text(s, encoding='utf-8')
+PY
+
+echo "Mail-update toegepast: fullscreen + doorsturen met bijlagen + klikbare hyperlinks."
 echo "Controleer met: git status --short"
