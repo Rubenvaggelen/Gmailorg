@@ -1,0 +1,31 @@
+name: Validate shared Family key integration
+on:
+  push:
+    branches: [feature/the-one-family-shared-microsoft-ns-20261010]
+  pull_request:
+    paths: ['app.js', 'index.html', 'sw.js', '.github/workflows/shared-family-keys-ci.yml']
+permissions:
+  contents: read
+jobs:
+  source-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JavaScript syntax
+        run: node --check app.js
+      - name: Check no NS secrets or direct NS requests in public PWA
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          js = Path('app.js').read_text(encoding='utf-8')
+          html = Path('index.html').read_text(encoding='utf-8')
+          assert 'Ocp-Apim-Subscription-Key' not in js
+          assert 'gateway.apiportal.ns.nl' not in js
+          assert 'state.nsApiKey' not in js
+          assert 'setting-ns-api-key' not in html
+          assert 'ns-reisinformatie-proxy.php' in js
+          assert js.count('fetchNs("trips", params)') == 3
+          assert 'fetchNs("stations")' in js
+          assert 'msClientId: localStorage.getItem' in js
+          print('PASSED: shared Microsoft default and private server NS proxy are wired')
+          PY
