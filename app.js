@@ -217,10 +217,20 @@ function looksLikeWebshopMail(message) {
 }
 
 
+// Family-wide NS proxy. Subscription keys stay on our server, never in a public PWA.
+const NS_SHARED_API_URL = "https://rubenvanaggelen.com/the-one-remote-api/ns-reisinformatie-proxy.php";
+
+async function fetchNs(resource, parameters = {}) {
+  const query = new URLSearchParams({ resource });
+  for (const [key, value] of new URLSearchParams(parameters)) query.set(key, value);
+  return fetch(`${NS_SHARED_API_URL}?${query.toString()}`, {
+    method: "GET", mode: "cors", credentials: "omit", cache: "no-store"
+  });
+}
+
 const state = {
   clientId: "1057161054676-mg300mfsuca24ju7l84muia382nc84t6.apps.googleusercontent.com",
-  msClientId: localStorage.getItem("postbus:msClientId") || "",
-  nsApiKey: localStorage.getItem("postbus:nsApiKey") || "",
+  msClientId: localStorage.getItem("postbus:msClientId") || "34c760ae-7d9b-41aa-b53a-bbbd665b70c7",
   fixedOrigin: localStorage.getItem("postbus:fixedOrigin") || "",
   addressAliases: JSON.parse(localStorage.getItem("postbus:addressAliases") || "null") || {
     "c.a snackcident": "Vianenstraat 31",
@@ -2089,10 +2099,10 @@ function wireRoutePage() {
     listEl.innerHTML = "";
     shiftRow.classList.add("hidden");
 
-    if (!state.nsApiKey) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen."; return; }
+    // NS is configured centrally; no per-device API key is required.
 
     await ensureStationsLoaded();
-    if (!nsStationsCache) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon de stationslijst niet ophalen — check je API-sleutel."; return; }
+    if (!nsStationsCache) { statusEl.classList.remove("hidden"); statusEl.textContent = "Kon de stationslijst niet ophalen via The One Family-server."; return; }
 
     let fromCode, toCode, dateTimeIso;
     if (overrideIso && lastTrainSearch) {
@@ -2167,7 +2177,7 @@ function wireRoutePage() {
     } catch (e) {
       console.error("Treinreis zoeken mislukt", e);
       statusEl.classList.remove("hidden");
-      statusEl.textContent = "Zoeken mislukt — check je API-sleutel of probeer het later opnieuw.";
+      statusEl.textContent = "Zoeken mislukt — probeer het later opnieuw.";
     }
   }
 
@@ -2232,11 +2242,9 @@ function wireRestaurants() {
 let nsStationsCache = null;
 
 async function ensureStationsLoaded() {
-  if (nsStationsCache || !state.nsApiKey) return;
+  if (nsStationsCache) return;
   try {
-    const r = await fetch("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations", {
-      headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
-    });
+    const r = await fetchNs("stations");
     if (!r.ok) return;
     const data = await r.json();
     nsStationsCache = (data.payload || []).map(s => ({
@@ -2295,9 +2303,7 @@ let currentTrainSearchDateTime = null;
 
 async function fetchNsTripsRaw(fromCode, toCode, dateTimeIso) {
   const params = new URLSearchParams({ fromStation: fromCode, toStation: toCode, dateTime: dateTimeIso });
-  const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
-    headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
-  });
+  const r = await fetchNs("trips", params);
   if (!r.ok) throw new Error("NS-aanvraag mislukt");
   const data = await r.json();
   return data.trips || [];
@@ -2309,16 +2315,12 @@ async function searchTrainTrips(overrideDateTimeIso) {
   const listEl = document.getElementById("train-trip-list");
   const shiftRow = document.getElementById("train-shift-row");
 
-  if (!state.nsApiKey) {
-    statusEl.classList.remove("hidden");
-    statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen.";
-    return;
-  }
+  // NS is configured centrally; no per-device API key is required.
 
   await ensureStationsLoaded();
   if (!nsStationsCache) {
     statusEl.classList.remove("hidden");
-    statusEl.textContent = "Kon de stationslijst niet ophalen — check je API-sleutel.";
+    statusEl.textContent = "Kon de stationslijst niet ophalen via The One Family-server.";
     return;
   }
 
@@ -2355,11 +2357,9 @@ async function searchTrainTrips(overrideDateTimeIso) {
       toStation: toCode,
       dateTime: searchIso
     });
-    const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
-      headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
-    });
+    const r = await fetchNs("trips", params);
     if (!r.ok) {
-      statusEl.textContent = "Zoeken mislukt — check je API-sleutel of probeer het later opnieuw.";
+      statusEl.textContent = "Zoeken mislukt — probeer het later opnieuw.";
       return;
     }
     const data = await r.json();
@@ -3041,7 +3041,7 @@ async function updateTravelAdvice() {
     } catch (e) { console.error("Autoadvies mislukt", e); }
 
     // --- Trein ---
-    if (state.nsApiKey) {
+    if (NS_SHARED_API_URL) {
       try {
         await ensureStationsLoaded();
         const fromStation = findNearestStation(latitude, longitude);
@@ -3053,9 +3053,7 @@ async function updateTravelAdvice() {
             dateTime: eventStart.toISOString(),
             searchForArrival: "true"
           });
-          const r = await fetch(`https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips?${params.toString()}`, {
-            headers: { "Ocp-Apim-Subscription-Key": state.nsApiKey }
-          });
+          const r = await fetchNs("trips", params);
           if (r.ok) {
             const data = await r.json();
             const best = (data.trips || [])[data.trips.length - 1];
@@ -3132,7 +3130,7 @@ function wireEventRoutePanel() {
     const listEl = document.getElementById("event-route-train-results");
     listEl.innerHTML = "";
 
-    if (!state.nsApiKey) { statusEl.classList.remove("hidden"); statusEl.textContent = "Vul eerst je NS API-sleutel in bij Instellingen."; return; }
+    // NS is configured centrally; no per-device API key is required.
 
     const fromName = document.getElementById("event-route-train-from").value.trim();
     const toName = document.getElementById("event-route-train-to").value.trim();
@@ -3539,13 +3537,8 @@ function wireSettings() {
     msalInstance = null; // opnieuw aanmaken met de nieuwe Client ID
   });
 
-  const nsApiKeyInput = document.getElementById("setting-ns-api-key");
-  nsApiKeyInput.value = state.nsApiKey;
-  nsApiKeyInput.addEventListener("change", () => {
-    state.nsApiKey = nsApiKeyInput.value.trim();
-    localStorage.setItem("postbus:nsApiKey", state.nsApiKey);
-    nsStationsCache = null; // opnieuw ophalen met de nieuwe sleutel
-  });
+  // No public-browser storage of the NS subscription key.
+  localStorage.removeItem("postbus:nsApiKey");
 
   const fixedOriginInput = document.getElementById("setting-fixed-origin");
   fixedOriginInput.value = state.fixedOrigin;
